@@ -4,6 +4,54 @@
 
 import { redactPii } from "./pii-redactor.js";
 
+/**
+ * Education degree weight ranks for calculating highest degree accurately.
+ */
+export const DEGREE_RANKS = Object.freeze([
+  { pattern: /(?:博士后|博士研究生|博士|PhD)/i, degree: "博士", weight: 5 },
+  { pattern: /(?:硕士研究生|硕士|MBA|EMBA|Master)/i, degree: "硕士", weight: 4 },
+  { pattern: /(?:本科|学士|双学士|Bachelor)/i, degree: "本科", weight: 3 },
+  { pattern: /(?:大专|专科|高职|高职高专)/i, degree: "大专", weight: 2 },
+  { pattern: /(?:高中|中专|中技)/i, degree: "高中", weight: 1 }
+]);
+
+/**
+ * Extracts highest degree from text by weight ranking.
+ * Prevents picking lower degrees when multiple degrees or chronological orders are mentioned.
+ * 
+ * @param {string} text 
+ * @returns {string} Highest degree name
+ */
+export function extractHighestDegree(text) {
+  if (typeof text !== "string" || !text.trim()) return "";
+
+  // 1. Explicit label check takes precedence if formatted as 最高学历：xxx
+  const labeled = text.match(/(?:最高学历|学历)[:：\s]*(博士后|博士研究生|硕士研究生|博士|硕士|本科|大专|专科|高中|中专)/);
+  if (labeled) {
+    return labeled[1].trim();
+  }
+
+  // 2. Rank calculation across whole text
+  let maxWeight = 0;
+  let bestDegree = "";
+
+  const allMatches = text.matchAll(/(博士后|博士研究生|硕士研究生|博士|硕士|本科|大专|专科|学士|双学士|高中|中专)/g);
+  for (const match of allMatches) {
+    const term = match[1];
+    for (const rank of DEGREE_RANKS) {
+      if (rank.pattern.test(term)) {
+        if (rank.weight > maxWeight) {
+          maxWeight = rank.weight;
+          bestDegree = term;
+        }
+        break;
+      }
+    }
+  }
+
+  return bestDegree;
+}
+
 export function extractLocalProfileAndPii(rawText) {
   const text = String(rawText || "").trim();
   const rawLines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
@@ -42,11 +90,8 @@ export function extractLocalProfileAndPii(rawText) {
     pii["性别"] = m ? m[1] : "";
   }
 
-  // 4. Highest Education degree
-  const eduMatch = text.match(/(博士研究生|硕士研究生|博士|硕士|本科|大专|专科)/);
-  if (eduMatch) {
-    pii["最高学历"] = eduMatch[1];
-  }
+  // 4. Highest Education degree by rank
+  pii["最高学历"] = extractHighestDegree(text);
 
   // 5. Name extraction
   const labeledName = text.match(/(?:姓名|Name)[:：\s]*([\u4e00-\u9fa5]{2,4}|[A-Za-z\s]{2,20})/i);
@@ -216,41 +261,84 @@ export function extractLocalProfileAndPii(rawText) {
 /**
  * Robust Multi-Section Segmenter: Extracts Education, Work, Project, Skills, Awards, Languages
  */
-function parseFullSections(lines, profile) {
-  const sectionHeaders = [
-    { key: "education", regex: /^(?:教育经历|教育背景|学历信息|就读经历|学习经历|教育信息)/ },
-    { key: "internship", regex: /^(?:实习经历|实习经验|学生实践)/ },
-    { key: "work", regex: /^(?:工作经历|工作经验|职业经历|从业经历|工作信息)/ },
-    { key: "project", regex: /^(?:项目经历|项目经验|科研经历|个人项目|项目)/ },
-    { key: "computer", regex: /^(?:专业技能|技能特长|个人技能|IT技能|计算机技能|专业技术|技能清单)/ },
-    { key: "language", regex: /^(?:外语能力|语言能力|外语水平|英语水平)/ },
-    { key: "certificates", regex: /^(?:证书|执照|资质证书|职业资格|资格证书)/ },
-    { key: "awards", regex: /^(?:荣誉成果|奖惩情况|所获奖项|奖学金与荣誉|个人荣誉|奖励与荣誉|获奖经历)/ },
-    { key: "self", regex: /^(?:自我评价|个人优势|自我介绍|个人总结|个人简介)/ }
-  ];
+export const SECTION_HEADERS = Object.freeze([
+  { key: "education", regex: /^(?:教育经历|教育背景|学历信息|就读经历|学习经历|教育信息)/ },
+  { key: "internship", regex: /^(?:实习经历|实习经验|学生实践)/ },
+  { key: "work", regex: /^(?:工作经历|工作经验|职业经历|从业经历|工作信息)/ },
+  { key: "project", regex: /^(?:项目经历|项目经验|科研经历|个人项目|项目)/ },
+  { key: "computer", regex: /^(?:专业技能|技能特长|个人技能|IT技能|计算机技能|专业技术|技能清单)/ },
+  { key: "language", regex: /^(?:外语能力|语言能力|外语水平|英语水平)/ },
+  { key: "certificates", regex: /^(?:证书|执照|资质证书|职业资格|资格证书)/ },
+  { key: "awards", regex: /^(?:荣誉成果|奖惩情况|所获奖项|奖学金与荣誉|个人荣誉|奖励与荣誉|获奖经历)/ },
+  { key: "self", regex: /^(?:自我评价|个人优势|自我介绍|个人总结|个人简介)/ }
+]);
 
-  let currentKey = null;
-  const blocks = {};
+export function detectSectionHeader(line) {
+  if (typeof line !== "string") return null;
+  const trimmed = line.trim();
+  if (!trimmed) return null;
 
+  // Match leading symbols e.g. #, *, -, •, 【, [, numbers like 1., 一、
+  const headerMatch = trimmed.match(/^[#*\-•\s【\[]*(?:一|二|三|四|五|六|七|八|九|十|\d+)?(?:[、.．\s])*\s*([^\s:：\]】]{2,12})[】\]\s:：]*(.*)$/);
+  if (!headerMatch) return null;
+
+  const titleCandidate = headerMatch[1].trim();
+  const remainder = headerMatch[2]?.trim() || "";
+
+  for (const h of SECTION_HEADERS) {
+    if (h.regex.test(titleCandidate)) {
+      return { key: h.key, remainder };
+    }
+  }
+
+  return null;
+}
+
+export function preprocessResumeLines(lines) {
+  if (!Array.isArray(lines)) return [];
+  const result = [];
   for (const rawLine of lines) {
-    const line = rawLine.trim();
+    const line = String(rawLine || "").trim();
     if (!line) continue;
 
-    // Check if this line is a section header
-    let matchedHeader = null;
-    if (line.length < 25) {
-      const cleanHeaderLine = line.replace(/^[#*\-•\s]+/, "").replace(/[:：\s]+$/, "");
-      for (const h of sectionHeaders) {
-        if (h.regex.test(cleanHeaderLine)) {
-          matchedHeader = h.key;
-          break;
-        }
+    // Filter out Markdown table divider rows e.g. |---|---| or |:---:|
+    if (/^\|?[-:\s|]+\|?$/.test(line)) {
+      continue;
+    }
+
+    // Process table row with multiple | cells
+    if (line.includes("|")) {
+      const cells = line
+        .split("|")
+        .map((c) => c.trim())
+        .filter(Boolean);
+      if (cells.length > 1) {
+        result.push(cells.join("  "));
+        continue;
       }
     }
 
-    if (matchedHeader) {
-      currentKey = matchedHeader;
+    result.push(line);
+  }
+  return result;
+}
+
+/**
+ * Robust Multi-Section Segmenter: Extracts Education, Work, Project, Skills, Awards, Languages
+ */
+function parseFullSections(lines, profile) {
+  const normalizedLines = preprocessResumeLines(lines);
+  let currentKey = null;
+  const blocks = {};
+
+  for (const line of normalizedLines) {
+    const headerMatch = detectSectionHeader(line);
+    if (headerMatch) {
+      currentKey = headerMatch.key;
       if (!blocks[currentKey]) blocks[currentKey] = [];
+      if (headerMatch.remainder) {
+        blocks[currentKey].push(headerMatch.remainder);
+      }
       continue;
     }
 
@@ -306,7 +394,7 @@ function parseFullSections(lines, profile) {
 }
 
 /**
- * Parses Education entries into multiple structured items
+ * Parses Education entries into multiple structured items with State Machine chunking
  */
 function parseEducationEntries(lines, fallbackDegree = "") {
   const items = [];
@@ -315,18 +403,31 @@ function parseEducationEntries(lines, fallbackDegree = "") {
   const degreeRegex = /(博士研究生|硕士研究生|博士|硕士|本科|大专|专科|学士|双学士|MBA|EMBA)/;
   const majorRegex = /([\u4e00-\u9fa5A-Za-z\s]+(?:专业|系|工程|科学|技术|管理|经济|金融|法学|医学|计算机|软件|信息|设计|文学|英语|艺术|数学|物理|化学|生物|机械|电气|自动化|通信|土木|建筑))/;
 
-  // Split lines into chunks where each chunk starts with date or school
+  // State Machine chunking: avoids splitting when date and school appear on adjacent lines
   const chunks = [];
   let currentChunk = [];
+  let chunkHasDate = false;
+  let chunkHasSchool = false;
 
   for (const line of lines) {
+    const isBullet = /^[-*•\s]/.test(line);
     const hasDate = dateRegex.test(line);
-    const hasSchool = schoolRegex.test(line);
-    if ((hasDate || hasSchool) && currentChunk.length > 0) {
+    const hasSchool = !isBullet && schoolRegex.test(line);
+
+    const isNewEntry = (hasDate && chunkHasDate) ||
+                       (hasSchool && chunkHasSchool) ||
+                       ((hasDate && hasSchool) && currentChunk.length > 0);
+
+    if (isNewEntry && currentChunk.length > 0) {
       chunks.push(currentChunk);
       currentChunk = [];
+      chunkHasDate = false;
+      chunkHasSchool = false;
     }
+
     currentChunk.push(line);
+    if (hasDate) chunkHasDate = true;
+    if (hasSchool) chunkHasSchool = true;
   }
   if (currentChunk.length > 0) {
     chunks.push(currentChunk);
@@ -345,8 +446,18 @@ function parseEducationEntries(lines, fallbackDegree = "") {
     }
 
     let school = "";
-    const sm = fullText.match(schoolRegex);
-    if (sm) school = sm[1].trim();
+    for (let j = 0; j < Math.min(chunk.length, 2); j++) {
+      if (/^[-*•]/.test(chunk[j])) continue;
+      const sm = chunk[j].match(schoolRegex);
+      if (sm) {
+        school = sm[1].trim();
+        break;
+      }
+    }
+    if (!school) {
+      const sm = fullText.match(schoolRegex);
+      if (sm) school = sm[1].trim();
+    }
 
     let degree = "";
     const degM = fullText.match(degreeRegex);
@@ -360,7 +471,15 @@ function parseEducationEntries(lines, fallbackDegree = "") {
     const mm = fullText.match(majorRegex);
     if (mm) major = mm[1].trim();
 
-    const desc = chunk.filter((l) => !dateRegex.test(l) && !schoolRegex.test(l)).join("\n");
+    const descLines = [];
+    for (let j = 0; j < chunk.length; j++) {
+      const l = chunk[j];
+      const isPureHeader = (j < 2) && (dateRegex.test(l) || schoolRegex.test(l));
+      if (isPureHeader) continue;
+      const cleanLine = l.replace(/^[-*•\s]+/, "").replace(/^\d+[.、)）]\s*/, "").trim();
+      if (cleanLine) descLines.push(cleanLine);
+    }
+    const desc = descLines.join("\n");
 
     items.push({
       title: school ? `${school} (${degree || "教育经历"})` : `教育经历 ${i + 1}`,
@@ -383,7 +502,7 @@ function parseEducationEntries(lines, fallbackDegree = "") {
 }
 
 /**
- * Parses Work / Internship entries into multiple structured items
+ * Parses Work / Internship entries into multiple structured items with State Machine chunking
  */
 function parseWorkEntries(lines, defaultLabel = "工作经历") {
   const items = [];
@@ -393,15 +512,28 @@ function parseWorkEntries(lines, defaultLabel = "工作经历") {
 
   const chunks = [];
   let currentChunk = [];
+  let chunkHasDate = false;
+  let chunkHasCompany = false;
 
   for (const line of lines) {
+    const isBullet = /^[-*•\s]/.test(line);
     const hasDate = dateRegex.test(line);
-    const hasCompany = companyRegex.test(line);
-    if ((hasDate || hasCompany) && currentChunk.length > 0) {
+    const hasCompany = !isBullet && companyRegex.test(line);
+
+    const isNewEntry = (hasDate && chunkHasDate) ||
+                       (hasCompany && chunkHasCompany) ||
+                       ((hasDate && hasCompany) && currentChunk.length > 0);
+
+    if (isNewEntry && currentChunk.length > 0) {
       chunks.push(currentChunk);
       currentChunk = [];
+      chunkHasDate = false;
+      chunkHasCompany = false;
     }
+
     currentChunk.push(line);
+    if (hasDate) chunkHasDate = true;
+    if (hasCompany) chunkHasCompany = true;
   }
   if (currentChunk.length > 0) {
     chunks.push(currentChunk);
@@ -420,14 +552,45 @@ function parseWorkEntries(lines, defaultLabel = "工作经历") {
     }
 
     let company = "";
-    const cm = fullText.match(companyRegex);
-    if (cm) company = cm[1].trim();
+    for (let j = 0; j < Math.min(chunk.length, 2); j++) {
+      if (/^[-*•]/.test(chunk[j])) continue;
+      const cm = chunk[j].match(companyRegex);
+      if (cm) {
+        company = cm[1].trim();
+        break;
+      }
+    }
+    // Positional deduction on header line: [Date] [Company] [Role]
+    if (!company && chunk.length > 0 && !/^[-*•]/.test(chunk[0])) {
+      const strippedDate = chunk[0].replace(dateRegex, "").trim();
+      const strippedBoth = strippedDate.replace(roleRegex, "").trim();
+      if (strippedBoth && strippedBoth.length >= 2 && strippedBoth.length <= 30) {
+        company = strippedBoth;
+      }
+    }
 
     let role = "";
-    const rm = fullText.match(roleRegex);
-    if (rm) role = rm[1].trim();
+    for (let j = 0; j < Math.min(chunk.length, 2); j++) {
+      if (/^[-*•]/.test(chunk[j])) continue;
+      const rm = chunk[j].match(roleRegex);
+      if (rm) {
+        role = rm[1].trim();
+        break;
+      }
+    }
+    if (!role) {
+      const rm = fullText.match(roleRegex);
+      if (rm) role = rm[1].trim();
+    }
 
-    const descLines = chunk.filter((l) => !dateRegex.test(l) && !companyRegex.test(l));
+    const descLines = [];
+    for (let j = 0; j < chunk.length; j++) {
+      const l = chunk[j];
+      const isPureHeader = (j < 2) && (dateRegex.test(l) || companyRegex.test(l));
+      if (isPureHeader) continue;
+      const cleanLine = l.replace(/^[-*•\s]+/, "").replace(/^\d+[.、)）]\s*/, "").trim();
+      if (cleanLine) descLines.push(cleanLine);
+    }
     const desc = descLines.join("\n");
 
     items.push({
@@ -452,7 +615,7 @@ function parseWorkEntries(lines, defaultLabel = "工作经历") {
 }
 
 /**
- * Parses Project entries into multiple structured items
+ * Parses Project entries into multiple structured items with State Machine chunking
  */
 function parseProjectEntries(lines) {
   const items = [];
@@ -461,15 +624,28 @@ function parseProjectEntries(lines) {
 
   const chunks = [];
   let currentChunk = [];
+  let chunkHasDate = false;
+  let chunkHasProject = false;
 
   for (const line of lines) {
+    const isBullet = /^[-*•\s]/.test(line);
     const hasDate = dateRegex.test(line);
-    const hasProjectName = projectRegex.test(line);
-    if ((hasDate || hasProjectName) && currentChunk.length > 0) {
+    const hasProjectName = !isBullet && projectRegex.test(line);
+
+    const isNewEntry = (hasDate && chunkHasDate) ||
+                       (hasProjectName && chunkHasProject) ||
+                       ((hasDate && hasProjectName) && currentChunk.length > 0);
+
+    if (isNewEntry && currentChunk.length > 0) {
       chunks.push(currentChunk);
       currentChunk = [];
+      chunkHasDate = false;
+      chunkHasProject = false;
     }
+
     currentChunk.push(line);
+    if (hasDate) chunkHasDate = true;
+    if (hasProjectName) chunkHasProject = true;
   }
   if (currentChunk.length > 0) {
     chunks.push(currentChunk);
@@ -488,11 +664,23 @@ function parseProjectEntries(lines) {
     }
 
     let projectName = "";
-    const pm = fullText.match(projectRegex);
-    if (pm) {
-      projectName = pm[1].trim();
-    } else {
-      projectName = chunk[0]?.slice(0, 30) || `项目经历 ${i + 1}`;
+    for (let j = 0; j < Math.min(chunk.length, 2); j++) {
+      if (/^[-*•]/.test(chunk[j])) continue;
+      const stripped = chunk[j].replace(dateRegex, "").trim();
+      const pm = stripped.match(projectRegex);
+      if (pm) {
+        projectName = stripped.replace(/^项目名称[:：]?\s*/, "").trim();
+        break;
+      }
+    }
+    if (!projectName && chunk.length > 0 && !/^[-*•]/.test(chunk[0])) {
+      const stripped = chunk[0].replace(dateRegex, "").replace(/^项目名称[:：]?\s*/, "").trim();
+      if (stripped && stripped.length >= 2 && stripped.length <= 40) {
+        projectName = stripped;
+      }
+    }
+    if (!projectName) {
+      projectName = `项目经历 ${i + 1}`;
     }
 
     let role = "";
@@ -501,7 +689,14 @@ function parseProjectEntries(lines) {
       role = roleMatch[1].trim();
     }
 
-    const descLines = chunk.filter((l) => !dateRegex.test(l) && !projectRegex.test(l));
+    const descLines = [];
+    for (let j = 0; j < chunk.length; j++) {
+      const l = chunk[j];
+      const isPureHeader = (j < 2) && (dateRegex.test(l) || projectRegex.test(l));
+      if (isPureHeader) continue;
+      const cleanLine = l.replace(/^[-*•\s]+/, "").replace(/^\d+[.、)）]\s*/, "").trim();
+      if (cleanLine) descLines.push(cleanLine);
+    }
     const desc = descLines.join("\n");
 
     items.push({
