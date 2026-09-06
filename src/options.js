@@ -1,7 +1,8 @@
-import { PROTOCOL_ERRORS } from "./lib/protocol.js";
+import { PROTOCOL_ERRORS, MESSAGE_TYPES } from "./lib/protocol.js";
 import { parseDocxFile } from "./lib/docx-parser.js";
 import { parsePdfFile } from "./lib/pdf-parser.js";
 import { extractLocalProfileAndPii, mergeAiSectionsIntoProfile } from "./lib/profile-extractor.js";
+import { parseResumeFile, createResumeDraft } from "./lib/resume-import-service.js";
 
 const fields = {
   apiMode: document.getElementById("apiMode"),
@@ -46,6 +47,7 @@ const fields = {
   aiEnhanceStatus: document.getElementById("aiEnhanceStatus"),
   draftSetActiveCheckbox: document.getElementById("draftSetActiveCheckbox"),
   cancelDraftBtn: document.getElementById("cancelDraftBtn"),
+  updateCurrentDraftBtn: document.getElementById("updateCurrentDraftBtn"),
   confirmDraftBtn: document.getElementById("confirmDraftBtn"),
 
   conflictModal: document.getElementById("conflictModal"),
@@ -566,6 +568,7 @@ fields.closeDraftModal?.addEventListener("click", closeDraftModal);
 fields.cancelDraftBtn?.addEventListener("click", closeDraftModal);
 fields.draftPreviewText?.addEventListener("input", updateDraftCharCount);
 fields.enhanceWithAiBtn?.addEventListener("click", handleEnhanceWithAi);
+fields.updateCurrentDraftBtn?.addEventListener("click", handleUpdateCurrentDraft);
 fields.confirmDraftBtn?.addEventListener("click", handleConfirmDraft);
 
 fields.closeConflictModal?.addEventListener("click", closeConflictModal);
@@ -760,157 +763,36 @@ async function handleResumeUpload(event) {
   const file = event.target.files?.[0];
   if (!file) return;
 
-  const fileName = file.name || "";
-  const ext = fileName.slice(fileName.lastIndexOf(".")).toLowerCase();
-
   try {
     showToast("正在读取并自动解析简历文件...", "busy", 5000);
     setStatus("正在读取并自动解析简历文件...");
     setProfileFeedback("正在自动解析上传的简历文件...", "busy");
 
-    let profileV2 = null;
-    let pii = {};
-    let cleanText = "";
-    let warnings = [];
+    const parseResult = await parseResumeFile(file, {
+      parseImportedProfileBackup,
+      parsePdfFile,
+      parseDocxFile,
+      extractLocalProfileAndPii
+    });
 
-    if (ext === ".json") {
-      const text = await file.text();
-      profileV2 = parseImportedProfileBackup(text);
-      cleanText = "(从 JSON 备份文件导入)";
-      pii = { "姓名": profileV2?.sections?.basic?.values?.["姓名"] || "" };
-    } else if (ext === ".docx") {
-      const buffer = await file.arrayBuffer();
-      const parsed = await parseDocxFile(buffer);
-      cleanText = parsed.rawText;
-      warnings = parsed.warnings || [];
-      const localResult = extractLocalProfileAndPii(cleanText);
-      profileV2 = localResult.profileV2;
-      pii = localResult.pii;
-    } else if (ext === ".pdf") {
-      const buffer = await file.arrayBuffer();
-      const parsed = await parsePdfFile(buffer);
-      cleanText = parsed.rawText;
-      warnings = parsed.warnings || [];
-      const localResult = extractLocalProfileAndPii(cleanText);
-      profileV2 = localResult.profileV2;
-      pii = localResult.pii;
-    } else {
-      showToast("不支持的文件格式，仅支持 .pdf, .docx, .json", "error");
-      return;
-    }
+    const draft = createResumeDraft({
+      parseResult,
+      currentEnvelope,
+      editingProfileId
+    });
 
-    // Check if AI API is configured; if so, perform automatic AI deep structuring
-    const apiKey = fields.apiKey?.value?.trim();
-    if (apiKey && cleanText && cleanText.length > 30 && ext !== ".json") {
-      try {
-        showToast("检测到已配置 AI，正在利用大模型智能深度结构化经历...", "busy", 8000);
-        setStatus("正在利用 AI 深度提取多段经历与技能...");
-        const aiRes = await sendRuntimeMessage({
-          type: "OJAF_PARSE_RESUME_WITH_AI",
-          payload: { rawText: cleanText, previewText: cleanText }
-        });
-        if (aiRes && aiRes.sections) {
-          mergeAiSectionsIntoProfile(profileV2, aiRes.sections);
-        }
-      } catch (aiErr) {
-        console.warn("AI 自动增强解析跳过或失败，已自动采用高精度本地提取结果:", aiErr);
-      }
-    }
-
-    // Cache extracted data for optional manual inspection
-    lastExtractedData = {
-      name: fileName.replace(/\.[^/.]+$/, ""),
-      profileV2,
-      cleanText,
-      warnings,
-      pii
-    };
+    // Cache extracted draft for optional re-inspection
+    lastExtractedData = draft;
     if (fields.viewRawTextBtn) {
       fields.viewRawTextBtn.hidden = false;
     }
 
-    // Determine candidate profile name
-    const candidateName = pii["姓名"] || profileV2?.sections?.basic?.values?.["姓名"] || "";
-    const defaultName = candidateName ? `${candidateName}-简历` : fileName.replace(/\.[^/.]+$/, "");
+    // Open Draft Preview Modal - strictly no automatic persistence on upload!
+    openDraftModal(draft);
 
-    // Check if current envelope only has 1 empty profile (e.g. fresh installation)
-    const isCurrentEmpty = editingProfileId &&
-      currentEnvelope?.profiles?.[editingProfileId] &&
-      isProfileEmpty(currentEnvelope.profiles[editingProfileId].profileV2) &&
-      Object.keys(currentEnvelope.profiles).length === 1;
-
-    let targetProfileId = null;
-
-    if (isCurrentEmpty) {
-      // Direct rename and save into the empty profile
-      const renameRes = await sendRuntimeMessage({
-        type: "OJAF_RENAME_PROFILE",
-        payload: {
-          operationId: generateOpId(),
-          profileId: editingProfileId,
-          newName: defaultName,
-          baseStateRevision: currentEnvelope.stateRevision
-        }
-      });
-      const saveRes = await sendRuntimeMessage({
-        type: "OJAF_SAVE_PROFILE",
-        payload: {
-          operationId: generateOpId(),
-          profileId: editingProfileId,
-          baseProfileRevision: currentEnvelope.profiles[editingProfileId].revision,
-          baseStateRevision: renameRes.stateRevision,
-          profileV2
-        }
-      });
-      targetProfileId = editingProfileId;
-    } else {
-      // Create new profile with setActive = true
-      const createRes = await sendRuntimeMessage({
-        type: "OJAF_CREATE_PROFILE",
-        payload: {
-          operationId: generateOpId(),
-          name: defaultName,
-          profileV2,
-          setActive: true,
-          baseStateRevision: currentEnvelope.stateRevision
-        }
-      });
-      targetProfileId = createRes.profileId;
-    }
-
-    // Refresh envelope and reload into editor
-    const envRes = await sendRuntimeMessage({ type: "OJAF_GET_ENVELOPE" });
-    currentEnvelope = envRes.envelope;
-    editingProfileId = targetProfileId;
-    baseProfileRevision = currentEnvelope.profiles[editingProfileId]?.revision || 1;
-    baseStateRevision = currentEnvelope.stateRevision;
-    profileHasUnsavedChanges = false;
-
-    renderProfileSelect();
-    renderProfileSectionEditor(currentEnvelope.profiles[editingProfileId].profileV2);
-
-    // Build rich feedback summary
-    const eduCount = (profileV2.sections?.education?.items || []).length;
-    const workCount = (profileV2.sections?.work?.items || []).length;
-    const projCount = (profileV2.sections?.project?.items || []).length;
-    const summaryParts = [];
-    if (candidateName) summaryParts.push(`姓名: ${candidateName}`);
-    if (pii["手机号码"]) summaryParts.push("手机号");
-    if (pii["电子邮箱"]) summaryParts.push("邮箱");
-    if (eduCount > 0) summaryParts.push(`${eduCount} 段教育经历`);
-    if (workCount > 0) summaryParts.push(`${workCount} 段工作经历`);
-    if (projCount > 0) summaryParts.push(`${projCount} 段项目经历`);
-    const summaryStr = summaryParts.join("、") || "基本资料";
-
-    setStatus(`简历《${defaultName}》已自动解析并填入编辑区！包含：${summaryStr}`);
-    setProfileSaved(`简历已自动解析并保存：${defaultName}`);
-    showToast(`🎉 简历《${defaultName}》已成功自动解析并填入表单！`, "saved", 4500);
-
-    if (warnings && warnings.length > 0) {
-      setProfileFeedback(`⚠️ 自动解析完成，注意：${warnings.join("；")}。请在下方核对补充。`, "warning");
-    } else {
-      setProfileFeedback(`🎉 简历已自动解析并载入！已成功提取：${summaryStr}。可直接在下方编辑各字段。`, "saved");
-    }
+    setStatus("简历文件解析完成，请在确认弹窗中核对草稿并选择保存方式。");
+    setProfileFeedback("简历文件解析完成，请在确认弹窗中核对草稿并选择保存方式。", "busy");
+    showToast("简历解析完成，请确认草稿预览");
   } catch (err) {
     setStatus(`简历解析失败：${err.message}`, true);
     setProfileFeedback(`简历解析失败：${err.message}`, "error");
@@ -924,12 +806,21 @@ function openDraftModal(draftData) {
   currentDraftData = draftData;
   if (!fields.draftModal) return;
 
-  if (fields.draftProfileName) fields.draftProfileName.value = draftData.name || "新简历";
+  if (fields.draftProfileName) fields.draftProfileName.value = draftData.suggestedName || draftData.name || "新简历";
   if (fields.draftPreviewText) {
-    fields.draftPreviewText.value = draftData.cleanText || "";
+    fields.draftPreviewText.value = draftData.cleanText || draftData.rawText || "";
     updateDraftCharCount();
   }
-  if (fields.draftSetActiveCheckbox) fields.draftSetActiveCheckbox.checked = true;
+  if (fields.draftSetActiveCheckbox) fields.draftSetActiveCheckbox.checked = false;
+
+  if (fields.updateCurrentDraftBtn) {
+    if (draftData.target) {
+      fields.updateCurrentDraftBtn.hidden = false;
+      fields.updateCurrentDraftBtn.textContent = `更新当前简历 (${draftData.target.profileName})`;
+    } else {
+      fields.updateCurrentDraftBtn.hidden = true;
+    }
+  }
 
   if (fields.draftWarnings) {
     if (draftData.warnings && draftData.warnings.length > 0) {
@@ -1030,7 +921,7 @@ async function handleConfirmDraft() {
 
   try {
     const res = await sendRuntimeMessage({
-      type: "OJAF_CREATE_PROFILE",
+      type: MESSAGE_TYPES.CREATE_PROFILE,
       payload: {
         operationId: generateOpId(),
         name,
@@ -1043,7 +934,7 @@ async function handleConfirmDraft() {
     closeDraftModal();
     profileHasUnsavedChanges = false;
 
-    const envRes = await sendRuntimeMessage({ type: "OJAF_GET_ENVELOPE" });
+    const envRes = await sendRuntimeMessage({ type: MESSAGE_TYPES.GET_ENVELOPE });
     currentEnvelope = envRes.envelope;
     editingProfileId = res.profileId;
     baseProfileRevision = 1;
@@ -1056,6 +947,57 @@ async function handleConfirmDraft() {
   } catch (err) {
     showToast(`保存失败：${err.message}`, "error");
     setStatus(`保存新简历失败：${err.message}`, true);
+  }
+}
+
+async function handleUpdateCurrentDraft() {
+  if (!currentDraftData || !currentDraftData.target) return;
+  const target = currentDraftData.target;
+  const setActive = Boolean(fields.draftSetActiveCheckbox?.checked);
+
+  try {
+    const res = await sendRuntimeMessage({
+      type: MESSAGE_TYPES.SAVE_PROFILE,
+      payload: {
+        operationId: generateOpId(),
+        profileId: target.profileId,
+        baseProfileRevision: target.baseProfileRevision,
+        baseStateRevision: currentEnvelope.stateRevision,
+        profileV2: currentDraftData.profileV2
+      }
+    });
+
+    if (setActive) {
+      await sendRuntimeMessage({
+        type: MESSAGE_TYPES.SET_ACTIVE_PROFILE,
+        payload: {
+          operationId: generateOpId(),
+          profileId: target.profileId,
+          baseStateRevision: res.stateRevision
+        }
+      });
+    }
+
+    closeDraftModal();
+    profileHasUnsavedChanges = false;
+
+    const envRes = await sendRuntimeMessage({ type: MESSAGE_TYPES.GET_ENVELOPE });
+    currentEnvelope = envRes.envelope;
+    editingProfileId = target.profileId;
+    baseProfileRevision = currentEnvelope.profiles[editingProfileId]?.revision || 1;
+    baseStateRevision = currentEnvelope.stateRevision;
+
+    renderProfileSelect();
+    renderProfileSectionEditor(currentEnvelope.profiles[editingProfileId].profileV2);
+    setProfileSaved(`已更新当前简历：${target.profileName}`);
+    showToast(`简历【${target.profileName}】更新成功！`);
+  } catch (err) {
+    if (String(err.message || "").includes(PROTOCOL_ERRORS.CONFLICT)) {
+      openConflictModal();
+      return;
+    }
+    showToast(`更新简历失败：${err.message}`, "error");
+    setStatus(`更新简历失败：${err.message}`, true);
   }
 }
 
