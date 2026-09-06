@@ -108,14 +108,18 @@ export async function parsePdfFile(arrayBuffer) {
     warnings.push("提取文本超过 100,000 字符上限，已自动截断。");
   }
 
+  const lines = rawText ? rawText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean) : [];
+
   return {
     rawText,
+    lines,
     warnings,
     stats: {
       type: "pdf",
       pageCount: numPages,
       emptyPageCount,
-      charCount: rawText.length
+      charCount: rawText.length,
+      lineCount: lines.length
     }
   };
 }

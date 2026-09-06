@@ -1,5 +1,5 @@
 import { ProfileStore } from "./lib/profile-store.js";
-import { PROTOCOL_ERRORS } from "./lib/protocol.js";
+import { PROTOCOL_ERRORS, MESSAGE_TYPES } from "./lib/protocol.js";
 
 const DEFAULT_API_CONFIG = {
   mode: "openai-compatible",
@@ -97,70 +97,70 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
 async function handleMessage(message) {
   switch (message.type) {
-    case "OJAF_GET_SETTINGS":
+    case MESSAGE_TYPES.GET_SETTINGS:
       return getSettings();
-    case "OJAF_GET_ENVELOPE":
+    case MESSAGE_TYPES.GET_ENVELOPE:
       await ProfileStore.ensureInitialized(normalizeProfileV2);
       return ProfileStore.getEnvelope();
-    case "OJAF_GET_ACTIVE_PROFILE_SNAPSHOT":
+    case MESSAGE_TYPES.GET_ACTIVE_PROFILE_SNAPSHOT:
       await ProfileStore.ensureInitialized(normalizeProfileV2);
       return ProfileStore.getActiveSnapshot();
-    case "OJAF_SAVE_PROFILE": {
+    case MESSAGE_TYPES.SAVE_PROFILE: {
       await ProfileStore.ensureInitialized(normalizeProfileV2);
       const saveRes = await ProfileStore.saveProfile(message.payload || {}, normalizeProfileV2);
       if (!saveRes.ok) throw new Error(saveRes.error || "SAVE_FAILED");
       return saveRes;
     }
-    case "OJAF_SET_ACTIVE_PROFILE": {
+    case MESSAGE_TYPES.SET_ACTIVE_PROFILE: {
       await ProfileStore.ensureInitialized(normalizeProfileV2);
       const setRes = await ProfileStore.setActiveProfile(message.payload || {});
       if (!setRes.ok) throw new Error(setRes.error || "SET_ACTIVE_FAILED");
       return setRes;
     }
-    case "OJAF_CREATE_PROFILE": {
+    case MESSAGE_TYPES.CREATE_PROFILE: {
       await ProfileStore.ensureInitialized(normalizeProfileV2);
       const createRes = await ProfileStore.createProfile(message.payload || {}, normalizeProfileV2);
       if (!createRes.ok) throw new Error(createRes.error || "CREATE_FAILED");
       return createRes;
     }
-    case "OJAF_DELETE_PROFILE": {
+    case MESSAGE_TYPES.DELETE_PROFILE: {
       await ProfileStore.ensureInitialized(normalizeProfileV2);
       const delRes = await ProfileStore.deleteProfile(message.payload || {});
       if (!delRes.ok) throw new Error(delRes.error || "DELETE_FAILED");
       return delRes;
     }
-    case "OJAF_RENAME_PROFILE": {
+    case MESSAGE_TYPES.RENAME_PROFILE: {
       await ProfileStore.ensureInitialized(normalizeProfileV2);
       const renRes = await ProfileStore.renameProfile(message.payload || {});
       if (!renRes.ok) throw new Error(renRes.error || "RENAME_FAILED");
       return renRes;
     }
-    case "OJAF_PARSE_RESUME_WITH_AI":
+    case MESSAGE_TYPES.PARSE_RESUME_WITH_AI:
       return parseResumeWithAi(message.payload || {});
-    case "OJAF_OPEN_OPTIONS":
+    case MESSAGE_TYPES.OPEN_OPTIONS:
       await chrome.runtime.openOptionsPage();
       return {};
-    case "OJAF_SAVE_SETTINGS":
+    case MESSAGE_TYPES.SAVE_SETTINGS:
       return saveSettings(message.payload || {});
-    case "OJAF_CLEAR_SETTINGS":
+    case MESSAGE_TYPES.CLEAR_SETTINGS:
       return clearSettings();
-    case "OJAF_MAP_FIELDS":
+    case MESSAGE_TYPES.MAP_FIELDS:
       return mapFields(message.payload || {});
-    case "OJAF_ANALYZE_PAGE_STRUCTURE":
+    case MESSAGE_TYPES.ANALYZE_PAGE_STRUCTURE:
       return analyzePageStructure(message.payload || {});
-    case "OJAF_SAVE_PROFILE_PANEL_STATE":
+    case MESSAGE_TYPES.SAVE_PROFILE_PANEL_STATE:
       return saveProfilePanelState(message.payload || {});
-    case "OJAF_GET_PROFILE_PANEL_STATE":
+    case MESSAGE_TYPES.GET_PROFILE_PANEL_STATE:
       return getProfilePanelState(message.payload || {});
-    case "OJAF_LIST_MODELS":
+    case MESSAGE_TYPES.LIST_MODELS:
       return listModels(message.payload || {});
-    case "OJAF_TEST_CONNECTION":
+    case MESSAGE_TYPES.TEST_CONNECTION:
       return testApi(message.payload || {});
-    case "OJAF_GET_UPDATE_STATUS":
+    case MESSAGE_TYPES.GET_UPDATE_STATUS:
       return getUpdateState();
-    case "OJAF_CHECK_FOR_UPDATE":
+    case MESSAGE_TYPES.CHECK_FOR_UPDATE:
       return checkForUpdate({ reason: message.payload?.reason || "manual" });
-    case "OJAF_OPEN_UPDATE_PAGE":
+    case MESSAGE_TYPES.OPEN_UPDATE_PAGE:
       return openUpdatePage(message.payload || {});
     default:
       throw new Error(`Unknown message type: ${message.type}`);
@@ -1507,7 +1507,10 @@ async function parseResumeWithAi(payload) {
   }
 
   return {
-    ok: true,
-    aiSections: safeObj.sections
+    sections: safeObj.sections,
+    diagnostics: {
+      provider: apiConfig.mode || "openai-compatible",
+      model: apiConfig.model || "default"
+    }
   };
 }

@@ -781,7 +781,7 @@ async function handleResumeUpload(event) {
     } else if (ext === ".docx") {
       const buffer = await file.arrayBuffer();
       const parsed = await parseDocxFile(buffer);
-      cleanText = parsed.text;
+      cleanText = parsed.rawText;
       warnings = parsed.warnings || [];
       const localResult = extractLocalProfileAndPii(cleanText);
       profileV2 = localResult.profileV2;
@@ -789,7 +789,7 @@ async function handleResumeUpload(event) {
     } else if (ext === ".pdf") {
       const buffer = await file.arrayBuffer();
       const parsed = await parsePdfFile(buffer);
-      cleanText = parsed.text;
+      cleanText = parsed.rawText;
       warnings = parsed.warnings || [];
       const localResult = extractLocalProfileAndPii(cleanText);
       profileV2 = localResult.profileV2;

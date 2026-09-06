@@ -10,6 +10,7 @@ async function runAll() {
   const startTime = Date.now();
 
   try {
+    await import("./unit/contracts.test.js");
     await import("./test-phase0-security.js");
     await import("./test-phase1-invariants-concurrency.js");
     await import("./test-phase2-parsers-pii-ssrf.js");

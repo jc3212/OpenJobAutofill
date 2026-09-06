@@ -82,12 +82,16 @@ export async function parseDocxFile(arrayBuffer) {
     warnings.push("提取文本超过 100,000 字符限制，已截断尾部。");
   }
 
+  const cleanLines = lines.map((l) => l.trim()).filter(Boolean);
+
   return {
     rawText,
+    lines: cleanLines,
     warnings,
     stats: {
       type: "docx",
-      charCount: rawText.length
+      charCount: rawText.length,
+      lineCount: cleanLines.length
     }
   };
 }
