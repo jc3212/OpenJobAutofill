@@ -3,6 +3,12 @@ import { parseDocxFile } from "./lib/docx-parser.js";
 import { parsePdfFile } from "./lib/pdf-parser.js";
 import { extractLocalProfileAndPii, mergeAiSectionsIntoProfile } from "./lib/profile-extractor.js";
 import { parseResumeFile, createResumeDraft } from "./lib/resume-import-service.js";
+import {
+  createEmptyProfileV2,
+  normalizeProfileV2,
+  restorePassthrough,
+  assertProfileV2Schema
+} from "./lib/resume-schema.js";
 
 const fields = {
   apiMode: document.getElementById("apiMode"),
@@ -506,6 +512,7 @@ let baseProfileRevision = null;
 let baseStateRevision = null;
 let currentDraftData = null;
 let lastExtractedData = null;
+let currentEditingPassthrough = null;
 
 document.getElementById("settingsForm").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -2014,6 +2021,7 @@ function renderProfileSectionEditor(profileV2) {
     return;
   }
 
+  currentEditingPassthrough = profileV2?.__passthrough || null;
   const parsed = normalizeProfileV2(profileV2);
   const known = STRUCTURED_RESUME_SECTIONS.map((section) => renderStructuredSection(section, parsed.sections[section.key])).join("");
 
@@ -2348,7 +2356,11 @@ function collectProfileV2FromEditor() {
 
   profileV2.customSections = customSections;
   profileV2.updatedAt = new Date().toISOString();
-  return normalizeProfileV2(profileV2);
+  if (currentEditingPassthrough) {
+    profileV2.__passthrough = currentEditingPassthrough;
+  }
+  const restored = restorePassthrough(profileV2);
+  return normalizeProfileV2(restored);
 }
 
 function collectStructuredItems(sectionEl, section) {
@@ -2398,108 +2410,6 @@ function hasStructuredItemData(item) {
   return Object.keys(item?.values || {}).length > 0 || (item?.custom || []).length > 0;
 }
 
-function createEmptyProfileV2() {
-  const sections = {};
-  for (const section of STRUCTURED_RESUME_SECTIONS) {
-    sections[section.key] = section.kind === "repeat"
-      ? { key: section.key, title: section.title, kind: "repeat", items: [] }
-      : { key: section.key, title: section.title, kind: "simple", values: {}, custom: [] };
-  }
-
-  return {
-    schemaVersion: PROFILE_SCHEMA_VERSION,
-    updatedAt: "",
-    sections,
-    customSections: []
-  };
-}
-
-function normalizeProfileV2(profileV2) {
-  const normalized = createEmptyProfileV2();
-  const source = isPlainObject(profileV2) ? profileV2 : {};
-  const sourceSections = isPlainObject(source.sections) ? source.sections : {};
-
-  for (const config of STRUCTURED_RESUME_SECTIONS) {
-    const input = sourceSections[config.key];
-    normalized.sections[config.key] = normalizeProfileSectionData(config, input);
-  }
-
-  normalized.customSections = Array.isArray(source.customSections)
-    ? source.customSections
-        .map((section, index) => normalizeCustomProfileSection(section, index))
-        .filter(hasSimpleSectionData)
-    : [];
-  normalized.updatedAt = normalizePlainText(source.updatedAt || "", 80);
-  return normalized;
-}
-
-function normalizeProfileSectionData(config, input) {
-  if (config.kind === "repeat") {
-    return {
-      key: config.key,
-      title: config.title,
-      kind: "repeat",
-      items: Array.isArray(input?.items)
-        ? input.items.map(normalizeProfileItem).filter(hasStructuredItemData)
-        : []
-    };
-  }
-
-  return {
-    key: config.key,
-    title: config.title,
-    kind: "simple",
-    values: normalizeValuesObject(input?.values),
-    custom: normalizeCustomRows(input?.custom)
-  };
-}
-
-function normalizeProfileItem(item = {}) {
-  return {
-    title: normalizePlainText(item.title || "", 120),
-    values: normalizeValuesObject(item.values),
-    custom: normalizeCustomRows(item.custom)
-  };
-}
-
-function normalizeCustomProfileSection(section = {}, index = 0) {
-  return {
-    key: normalizePlainText(section.key || `extra-${index}`, 80),
-    title: normalizePlainText(section.title || "自定义资料", 120),
-    kind: "simple",
-    values: normalizeValuesObject(section.values),
-    custom: normalizeCustomRows(section.custom)
-  };
-}
-
-function normalizeValuesObject(values) {
-  const result = {};
-  if (!isPlainObject(values)) {
-    return result;
-  }
-
-  for (const [label, value] of Object.entries(values)) {
-    const cleanLabel = normalizePlainText(label, 120);
-    const cleanValue = String(value == null ? "" : value).trim();
-    if (cleanLabel && cleanValue) {
-      result[cleanLabel] = cleanValue;
-    }
-  }
-  return result;
-}
-
-function normalizeCustomRows(rows) {
-  if (!Array.isArray(rows)) {
-    return [];
-  }
-
-  return rows
-    .map((row) => ({
-      label: normalizePlainText(row?.label || "", 80),
-      value: String(row?.value == null ? "" : row.value).trim()
-    }))
-    .filter((row) => row.label && row.value);
-}
 
 function getProfileV2FromSettings(settings) {
   return normalizeProfileV2(settings?.profileV2 || createEmptyProfileV2());

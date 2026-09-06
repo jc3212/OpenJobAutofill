@@ -1,5 +1,6 @@
 import { ProfileStore } from "./lib/profile-store.js";
 import { PROTOCOL_ERRORS, MESSAGE_TYPES } from "./lib/protocol.js";
+import { normalizeProfileV2, assertProfileV2Schema } from "./lib/resume-schema.js";
 
 const DEFAULT_API_CONFIG = {
   mode: "openai-compatible",
@@ -649,97 +650,6 @@ function isPlainObject(value) {
   return Object.prototype.toString.call(value) === "[object Object]";
 }
 
-function normalizeProfileV2(profileV2) {
-  if (!isPlainObject(profileV2)) {
-    return DEFAULT_PROFILE_V2;
-  }
-
-  const sections = isPlainObject(profileV2.sections) ? profileV2.sections : {};
-  const normalizedSections = {};
-  for (const [key, section] of Object.entries(sections)) {
-    if (!isPlainObject(section)) {
-      continue;
-    }
-    const cleanKey = sanitizeAttributeText(key || section.key || "");
-    const title = sanitizePromptText(section.title || cleanKey, 120);
-    if (!cleanKey || !title) {
-      continue;
-    }
-
-    normalizedSections[cleanKey] = section.kind === "repeat"
-      ? {
-          key: cleanKey,
-          title,
-          kind: "repeat",
-          items: Array.isArray(section.items)
-            ? section.items.map(normalizeProfileV2Item).filter((item) => Object.keys(item.values).length > 0 || item.custom.length > 0)
-            : []
-        }
-      : {
-          key: cleanKey,
-          title,
-          kind: "simple",
-          values: normalizeProfileV2Values(section.values),
-          custom: normalizeProfileV2CustomRows(section.custom)
-        };
-  }
-
-  return {
-    schemaVersion: PROFILE_SCHEMA_VERSION,
-    updatedAt: sanitizePromptText(profileV2.updatedAt || "", 80),
-    sections: normalizedSections,
-    customSections: Array.isArray(profileV2.customSections)
-      ? profileV2.customSections.map(normalizeProfileV2CustomSection).filter((section) => Object.keys(section.values).length > 0 || section.custom.length > 0)
-      : []
-  };
-}
-
-function normalizeProfileV2Item(item = {}) {
-  return {
-    title: sanitizePromptText(item.title || "", 120),
-    values: normalizeProfileV2Values(item.values),
-    custom: normalizeProfileV2CustomRows(item.custom)
-  };
-}
-
-function normalizeProfileV2CustomSection(section = {}) {
-  return {
-    key: sanitizeAttributeText(section.key || "custom"),
-    title: sanitizePromptText(section.title || "自定义资料", 120),
-    kind: "simple",
-    values: normalizeProfileV2Values(section.values),
-    custom: normalizeProfileV2CustomRows(section.custom)
-  };
-}
-
-function normalizeProfileV2Values(values) {
-  const normalized = {};
-  if (!isPlainObject(values)) {
-    return normalized;
-  }
-
-  for (const [label, value] of Object.entries(values)) {
-    const cleanLabel = sanitizePromptText(label, 120);
-    const cleanValue = String(value == null ? "" : value).trim();
-    if (cleanLabel && cleanValue) {
-      normalized[cleanLabel] = cleanValue;
-    }
-  }
-  return normalized;
-}
-
-function normalizeProfileV2CustomRows(rows) {
-  if (!Array.isArray(rows)) {
-    return [];
-  }
-
-  return rows
-    .map((row) => ({
-      label: sanitizePromptText(row?.label || "", 80),
-      value: String(row?.value == null ? "" : row.value).trim()
-    }))
-    .filter((row) => row.label && row.value);
-}
 
 function redactPersonalValues(text, maxLength = 220) {
   if (!text) {
