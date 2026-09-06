@@ -216,7 +216,7 @@ async function openUpdatePage() {
   try {
     await sendRuntimeMessage({ type: "OJAF_OPEN_UPDATE_PAGE" });
     renderUpdateStatus({
-      message: "已打开 Release 页面。更新前建议先到设置页导出资料备份；更新时不要卸载扩展，覆盖或重新加载后本机资料和 API 设置会保留。"
+      message: "已打开 Release 页面。更新前建议先到设置页导出资料备份；更新时不要卸载扩展，覆盖或重新加载后本地已保存资料和 API 设置会保留。"
     });
   } catch (error) {
     renderUpdateStatus({ status: "error", error: error.message });
@@ -242,7 +242,7 @@ function formatUpdateStatus(state = {}) {
   }
   if (state.status === "available") {
     const version = state.latestVersion ? ` ${state.latestVersion}` : "";
-    return `发现新版本${version}。更新前建议先到设置页导出资料备份；点击“打开 Release 页面”下载更新。不要卸载扩展，覆盖或重新加载后本机资料和 API 设置会保留。`;
+    return `发现新版本${version}。更新前建议先到设置页导出资料备份；点击“打开 Release 页面”下载更新。不要卸载扩展，覆盖或重新加载后本地已保存资料和 API 设置会保留。`;
   }
   if (state.status === "current") {
     return `当前已是最新版本 ${state.currentVersion || chrome.runtime.getManifest().version}。`;
@@ -262,7 +262,7 @@ function formatRuntimeAiNote(aiUsage = {}, elapsed = "") {
     return " AI 辅助识别了部分字段，其余已用本地规则继续。";
   }
   if (aiUsage.used) {
-    return " AI 已辅助识别字段，具体填写仍在本机完成。";
+    return " AI 已辅助识别字段，具体填写仍由浏览器本地完成。";
   }
   if (aiUsage.fallback) {
     return " AI 不可用，已使用本地规则继续。";
@@ -278,7 +278,7 @@ function formatAiCompletionNote(aiUsage = {}) {
     return "本次 AI 辅助识别了部分字段，其余使用本地规则完成。";
   }
   if (aiUsage.used) {
-    return "本次 AI 辅助识别字段，具体填写在本机完成。";
+    return "本次 AI 辅助识别字段，具体填写由浏览器本地完成。";
   }
   if (aiUsage.fallback) {
     return "本次使用本地规则完成；AI 不可用。";

@@ -1396,7 +1396,7 @@ async function parseResumeWithAi(payload) {
           title: "教育经历",
           kind: "repeat",
           items: [{
-            values: { "学校名称": "", "专业": "", "学历": "", "起始时间": "", "结束时间": "" },
+            values: { "学校": "", "专业": "", "学历": "", "学位": "", "开始时间": "", "结束时间": "", "专业描述": "" },
             custom: []
           }]
         },
@@ -1405,43 +1405,51 @@ async function parseResumeWithAi(payload) {
           title: "工作经历",
           kind: "repeat",
           items: [{
-            values: { "公司名称": "", "职位名称": "", "所属部门": "", "起始时间": "", "结束时间": "", "工作描述": "" },
+            values: { "公司": "", "职位": "", "所属部门": "", "开始时间": "", "结束时间": "", "工作内容": "", "工作成果": "" },
             custom: []
           }]
         },
         project: {
           key: "project",
-          title: "项目经历",
+          title: "项目经历/实践活动",
           kind: "repeat",
           items: [{
-            values: { "项目名称": "", "项目角色": "", "起始时间": "", "结束时间": "", "项目描述": "", "主要业绩": "" },
+            values: { "项目名称": "", "职位": "", "本人职责": "", "开始时间": "", "结束时间": "", "项目内容": "", "项目成果": "" },
             custom: []
           }]
         },
-        skills: {
-          key: "skills",
-          title: "专业技能",
-          kind: "simple",
-          values: { "专业技能掌握情况": "" },
-          custom: []
-        },
-        certificates: {
-          key: "certificates",
-          title: "证书与执照",
+        computer: {
+          key: "computer",
+          title: "计算机技能（IT技能）",
           kind: "repeat",
           items: [{
-            values: { "证书名称": "", "获得时间": "" },
+            values: { "证书名称（技能名称）": "", "掌握程度": "熟练" },
+            custom: []
+          }]
+        },
+        language: {
+          key: "language",
+          title: "外语能力",
+          kind: "repeat",
+          items: [{
+            values: { "外语种类": "英语", "证书名称（技能名称）": "", "成绩": "" },
             custom: []
           }]
         },
         awards: {
           key: "awards",
-          title: "奖励与荣誉",
+          title: "奖惩情况",
           kind: "repeat",
           items: [{
-            values: { "奖项名称": "", "获奖时间": "" },
+            values: { "奖惩名称": "", "奖惩时间": "", "奖惩描述": "" },
             custom: []
           }]
+        },
+        self: {
+          key: "self",
+          title: "自我描述",
+          kind: "simple",
+          values: { "自我评价": "" }
         }
       }
     }, null, 2)

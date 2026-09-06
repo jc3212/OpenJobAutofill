@@ -1,10 +1,10 @@
 /**
- * OpenJobAutofill - Conservative Local Resume Profile Extractor and PII Isolator
+ * OpenJobAutofill - Full Automated Local Resume Profile Extractor and PII Isolator
  */
 
 export function extractLocalProfileAndPii(rawText) {
   const text = String(rawText || "").trim();
-  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const rawLines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
 
   const pii = {
     "姓名": "",
@@ -13,13 +13,19 @@ export function extractLocalProfileAndPii(rawText) {
     "性别": "",
     "出生日期": "",
     "最高学历": "",
-    "当前居住地": ""
+    "当前居住地": "",
+    "政治面貌": ""
   };
 
-  // 1. Phone extraction (11-digit Chinese mobile or international)
+  // 1. Phone extraction (11-digit Chinese mobile or international format)
   const phoneMatch = text.match(/(?:(?:\+|00)86[- ]?)?(1[3-9]\d{9})\b/);
   if (phoneMatch) {
     pii["电话"] = phoneMatch[1];
+  } else {
+    const telMatch = text.match(/(?:电话|手机|联系方式|TEL)[:：\s]*(\+?[0-9-]{7,18})/i);
+    if (telMatch) {
+      pii["电话"] = telMatch[1].trim();
+    }
   }
 
   // 2. Email extraction
@@ -41,31 +47,47 @@ export function extractLocalProfileAndPii(rawText) {
   }
 
   // 5. Name extraction
-  // Check labeled name first: 姓名: xxx
-  const labeledName = text.match(/姓名[:：]\s*([\u4e00-\u9fa5]{2,4}|[A-Za-z\s]{2,20})/);
-  if (labeledName) {
+  const labeledName = text.match(/(?:姓名|Name)[:：\s]*([\u4e00-\u9fa5]{2,4}|[A-Za-z\s]{2,20})/i);
+  if (labeledName && !/^(个人简历|求职简历|基本信息|工作经历)$/.test(labeledName[1].trim())) {
     pii["姓名"] = labeledName[1].trim();
   } else {
-    // If first line is 2-4 Chinese characters and not a generic title
-    if (lines.length > 0) {
-      const first = lines[0];
-      if (/^[\u4e00-\u9fa5]{2,4}$/.test(first) && !/^(个人简历|求职简历|基本信息|工作经历)$/.test(first)) {
-        pii["姓名"] = first;
+    for (let i = 0; i < Math.min(rawLines.length, 5); i++) {
+      const line = rawLines[i].replace(/\s+/g, "");
+      if (/^[\u4e00-\u9fa5]{2,4}$/.test(line) && !/^(个人简历|求职简历|基本信息|工作经历|教育经历|个人信息|联系方式)$/.test(line)) {
+        pii["姓名"] = rawLines[i].trim();
+        break;
       }
     }
   }
 
   // 6. Birthday / age
-  const birthMatch = text.match(/(?:出生年月|出生日期|生日)[:：]?\s*(\d{4}[-/.年]\d{1,2}[-/.月]?)/);
+  const birthMatch = text.match(/(?:出生年月|出生日期|生日)[:：]?\s*(\d{4}[-/.年]\d{1,2}[-/.月]?(?:\d{1,2}[日号]?)?)/);
   if (birthMatch) {
-    pii["出生日期"] = birthMatch[1].replace(/[年月]/g, "-").replace(/[-.]$/, "");
+    pii["出生日期"] = birthMatch[1].replace(/[年月]/g, "-").replace(/[-.]$/, "").replace(/日|号/, "");
   }
 
-  // 7. City
-  const cityMatch = text.match(/(?:现居|城市|住址|常住地)[:：]\s*([\u4e00-\u9fa5]{2,10}(?:市|省|区)?)/);
+  // 7. City / Location
+  const cityMatch = text.match(/(?:现居|现居住城市|城市|住址|常住地|现居住地)[:：\s]*([\u4e00-\u9fa5]{2,10}(?:市|省|区)?)/);
   if (cityMatch) {
     pii["当前居住地"] = cityMatch[1].trim();
   }
+
+  // 8. Political status
+  const poliMatch = text.match(/(?:政治面貌)[:：\s]*(中共党员|中共预备党员|共青团员|群众|民主党派)/);
+  if (poliMatch) {
+    pii["政治面貌"] = poliMatch[1];
+  }
+
+  // 9. Job intention
+  let intentionRole = "";
+  let intentionCity = "";
+  let intentionSalary = "";
+  const roleMatch = text.match(/(?:求职意向|期望职位|应聘职位|目标岗位|期望岗位|意向岗位)[:：\s]*([^\n\r,，。]+)/);
+  if (roleMatch) intentionRole = roleMatch[1].trim();
+  const intentCityMatch = text.match(/(?:期望城市|工作地点|意向城市|期望工作城市)[:：\s]*([^\n\r,，。]+)/);
+  if (intentCityMatch) intentionCity = intentCityMatch[1].trim();
+  const salaryMatch = text.match(/(?:期望薪资|期望月薪|薪资要求)[:：\s]*([^\n\r,，。]+)/);
+  if (salaryMatch) intentionSalary = salaryMatch[1].trim();
 
   // Prepare isolated experience text by redacting phone and email
   let experienceText = text;
@@ -78,6 +100,7 @@ export function extractLocalProfileAndPii(rawText) {
 
   // Construct initial local ProfileV2 structure
   const now = new Date().toISOString();
+  const candidateName = pii["姓名"] || "未命名";
   const localProfile = {
     schemaVersion: 2,
     updatedAt: now,
@@ -88,19 +111,43 @@ export function extractLocalProfileAndPii(rawText) {
         kind: "simple",
         values: {
           "姓名": pii["姓名"] || "",
-          "简历名称": pii["姓名"] ? `${pii["姓名"]}-个人简历` : "个人简历",
+          "简历名称": `${candidateName}-简历`,
           "性别": pii["性别"] || "",
           "电话": pii["电话"] || "",
           "邮箱": pii["邮箱"] || "",
           "出生日期": pii["出生日期"] || "",
           "最高学历": pii["最高学历"] || "",
-          "当前居住地": pii["当前居住地"] || ""
+          "当前居住地": pii["当前居住地"] || "",
+          "现居住城市": pii["当前居住地"] || "",
+          "政治面貌": pii["政治面貌"] || ""
         },
         custom: []
+      },
+      intention: {
+        key: "intention",
+        title: "求职意向",
+        kind: "repeat",
+        items: [
+          {
+            title: "求职意向 1",
+            values: {
+              "意向岗位": intentionRole,
+              "期望工作城市": intentionCity,
+              "期望薪资": intentionSalary
+            },
+            custom: []
+          }
+        ]
       },
       education: {
         key: "education",
         title: "教育经历",
+        kind: "repeat",
+        items: []
+      },
+      internship: {
+        key: "internship",
+        title: "实习经历",
         kind: "repeat",
         items: []
       },
@@ -112,37 +159,49 @@ export function extractLocalProfileAndPii(rawText) {
       },
       project: {
         key: "project",
-        title: "项目经历",
+        title: "项目经历/实践活动",
         kind: "repeat",
         items: []
       },
-      skills: {
-        key: "skills",
-        title: "专业技能",
-        kind: "simple",
-        values: {
-          "专业技能掌握情况": ""
-        },
-        custom: []
+      computer: {
+        key: "computer",
+        title: "计算机技能（IT技能）",
+        kind: "repeat",
+        items: []
+      },
+      language: {
+        key: "language",
+        title: "外语能力",
+        kind: "repeat",
+        items: []
       },
       certificates: {
         key: "certificates",
-        title: "证书与执照",
+        title: "证书",
         kind: "repeat",
         items: []
       },
       awards: {
         key: "awards",
-        title: "奖励与荣誉",
+        title: "奖惩情况",
         kind: "repeat",
         items: []
+      },
+      self: {
+        key: "self",
+        title: "自我描述",
+        kind: "simple",
+        values: {
+          "自我评价": ""
+        },
+        custom: []
       }
     },
     customSections: []
   };
 
-  // Perform conservative section segmentation to populate basic items
-  segmentSections(lines, localProfile);
+  // Run comprehensive multi-section segmentation
+  parseFullSections(rawLines, localProfile);
 
   return {
     localProfile,
@@ -154,91 +213,458 @@ export function extractLocalProfileAndPii(rawText) {
   };
 }
 
-function segmentSections(lines, profile) {
-  let currentSection = null;
-  const sectionBuffers = {};
+/**
+ * Robust Multi-Section Segmenter: Extracts Education, Work, Project, Skills, Awards, Languages
+ */
+function parseFullSections(lines, profile) {
+  const sectionHeaders = [
+    { key: "education", regex: /^(?:教育经历|教育背景|学历信息|就读经历|学习经历|教育信息)/ },
+    { key: "internship", regex: /^(?:实习经历|实习经验|学生实践)/ },
+    { key: "work", regex: /^(?:工作经历|工作经验|职业经历|从业经历|工作信息)/ },
+    { key: "project", regex: /^(?:项目经历|项目经验|科研经历|个人项目|项目)/ },
+    { key: "computer", regex: /^(?:专业技能|技能特长|个人技能|IT技能|计算机技能|专业技术|技能清单)/ },
+    { key: "language", regex: /^(?:外语能力|语言能力|外语水平|英语水平)/ },
+    { key: "certificates", regex: /^(?:证书|执照|资质证书|职业资格|资格证书)/ },
+    { key: "awards", regex: /^(?:荣誉成果|奖惩情况|所获奖项|奖学金与荣誉|个人荣誉|奖励与荣誉|获奖经历)/ },
+    { key: "self", regex: /^(?:自我评价|个人优势|自我介绍|个人总结|个人简介)/ }
+  ];
 
-  const SECTION_KEYWORDS = {
-    education: ["教育经历", "教育背景", "学历信息", "就读经历"],
-    work: ["工作经历", "实习经历", "工作经验", "实习经验", "职业经历"],
-    project: ["项目经历", "项目经验", "科研经历"],
-    skills: ["专业技能", "技能特长", "个人技能", "IT技能"],
-    certificates: ["证书与执照", "资质证书", "荣誉证书", "技能证书"],
-    awards: ["奖励与荣誉", "所获奖项", "奖学金与荣誉", "个人荣誉"]
-  };
+  let currentKey = null;
+  const blocks = {};
 
-  for (const line of lines) {
-    let matched = null;
-    for (const [secKey, keywords] of Object.entries(SECTION_KEYWORDS)) {
-      if (keywords.some((kw) => line.includes(kw) && line.length < 15)) {
-        matched = secKey;
-        break;
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) continue;
+
+    // Check if this line is a section header
+    let matchedHeader = null;
+    if (line.length < 25) {
+      const cleanHeaderLine = line.replace(/^[#*\-•\s]+/, "").replace(/[:：\s]+$/, "");
+      for (const h of sectionHeaders) {
+        if (h.regex.test(cleanHeaderLine)) {
+          matchedHeader = h.key;
+          break;
+        }
       }
     }
 
-    if (matched) {
-      currentSection = matched;
-      if (!sectionBuffers[currentSection]) {
-        sectionBuffers[currentSection] = [];
-      }
+    if (matchedHeader) {
+      currentKey = matchedHeader;
+      if (!blocks[currentKey]) blocks[currentKey] = [];
       continue;
     }
 
-    if (currentSection) {
-      sectionBuffers[currentSection].push(line);
+    if (currentKey) {
+      blocks[currentKey].push(line);
     }
   }
 
-  // Populate skills if found
-  if (sectionBuffers.skills?.length) {
-    profile.sections.skills.values["专业技能掌握情况"] = sectionBuffers.skills.join("\n");
+  // 1. Process Education Entries
+  if (blocks.education?.length) {
+    profile.sections.education.items = parseEducationEntries(blocks.education, profile.sections.basic.values["最高学历"]);
   }
 
-  // Populate raw fallback items for repeated sections so user has text
-  if (sectionBuffers.education?.length) {
-    profile.sections.education.items.push({
-      values: {
-        "学校名称": sectionBuffers.education[0] || "",
-        "专业": "",
-        "学历": profile.sections.basic.values["最高学历"] || "",
-        "起始时间": "",
-        "结束时间": ""
-      },
-      custom: []
-    });
+  // 2. Process Internship Entries
+  if (blocks.internship?.length) {
+    profile.sections.internship.items = parseWorkEntries(blocks.internship, "实习经历");
   }
 
-  if (sectionBuffers.work?.length) {
-    profile.sections.work.items.push({
-      values: {
-        "公司名称": sectionBuffers.work[0] || "",
-        "职位名称": "",
-        "所属部门": "",
-        "起始时间": "",
-        "结束时间": "",
-        "工作描述": sectionBuffers.work.slice(1).join("\n")
-      },
-      custom: []
-    });
+  // 3. Process Work Entries
+  if (blocks.work?.length) {
+    profile.sections.work.items = parseWorkEntries(blocks.work, "工作经历");
   }
 
-  if (sectionBuffers.project?.length) {
-    profile.sections.project.items.push({
-      values: {
-        "项目名称": sectionBuffers.project[0] || "",
-        "项目角色": "",
-        "起始时间": "",
-        "结束时间": "",
-        "项目描述": sectionBuffers.project.slice(1).join("\n"),
-        "主要业绩": ""
-      },
-      custom: []
-    });
+  // 4. Process Project Entries
+  if (blocks.project?.length) {
+    profile.sections.project.items = parseProjectEntries(blocks.project);
+  }
+
+  // 5. Process Computer / Tech Skills
+  if (blocks.computer?.length) {
+    profile.sections.computer.items = parseComputerSkills(blocks.computer);
+  }
+
+  // 6. Process Languages
+  if (blocks.language?.length) {
+    profile.sections.language.items = parseLanguageEntries(blocks.language);
+  }
+
+  // 7. Process Awards
+  if (blocks.awards?.length) {
+    profile.sections.awards.items = parseAwardEntries(blocks.awards);
+  }
+
+  // 8. Process Certificates
+  if (blocks.certificates?.length) {
+    profile.sections.certificates.items = parseCertificateEntries(blocks.certificates);
+  }
+
+  // 9. Process Self Description
+  if (blocks.self?.length) {
+    profile.sections.self.values["自我评价"] = blocks.self.join("\n");
   }
 }
 
 /**
+ * Parses Education entries into multiple structured items
+ */
+function parseEducationEntries(lines, fallbackDegree = "") {
+  const items = [];
+  const dateRegex = /(\d{4}[./年-]\d{1,2})\s*(?:[-~至到/]\s*(\d{4}[./年-]\d{1,2}|至今|现在|present))?/i;
+  const schoolRegex = /([\u4e00-\u9fa5A-Za-z\s]+(?:大学|学院|分校|高等专科学校|中学|学校|University|College))/;
+  const degreeRegex = /(博士研究生|硕士研究生|博士|硕士|本科|大专|专科|学士|双学士|MBA|EMBA)/;
+  const majorRegex = /([\u4e00-\u9fa5A-Za-z\s]+(?:专业|系|工程|科学|技术|管理|经济|金融|法学|医学|计算机|软件|信息|设计|文学|英语|艺术|数学|物理|化学|生物|机械|电气|自动化|通信|土木|建筑))/;
+
+  // Split lines into chunks where each chunk starts with date or school
+  const chunks = [];
+  let currentChunk = [];
+
+  for (const line of lines) {
+    const hasDate = dateRegex.test(line);
+    const hasSchool = schoolRegex.test(line);
+    if ((hasDate || hasSchool) && currentChunk.length > 0) {
+      chunks.push(currentChunk);
+      currentChunk = [];
+    }
+    currentChunk.push(line);
+  }
+  if (currentChunk.length > 0) {
+    chunks.push(currentChunk);
+  }
+
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    const fullText = chunk.join(" ");
+
+    let startDate = "";
+    let endDate = "";
+    const dm = fullText.match(dateRegex);
+    if (dm) {
+      startDate = dm[1].replace(/[./年]/g, "-").replace(/[-.月]$/, "");
+      endDate = dm[2] ? dm[2].replace(/[./年]/g, "-").replace(/[-.月]$/, "") : "至今";
+    }
+
+    let school = "";
+    const sm = fullText.match(schoolRegex);
+    if (sm) school = sm[1].trim();
+
+    let degree = "";
+    const degM = fullText.match(degreeRegex);
+    if (degM) {
+      degree = degM[1].trim();
+    } else if (fallbackDegree) {
+      degree = fallbackDegree;
+    }
+
+    let major = "";
+    const mm = fullText.match(majorRegex);
+    if (mm) major = mm[1].trim();
+
+    const desc = chunk.filter((l) => !dateRegex.test(l) && !schoolRegex.test(l)).join("\n");
+
+    items.push({
+      title: school ? `${school} (${degree || "教育经历"})` : `教育经历 ${i + 1}`,
+      values: {
+        "学校": school,
+        "学校名称": school,
+        "开始时间": startDate,
+        "起始时间": startDate,
+        "结束时间": endDate,
+        "专业": major,
+        "学历": degree,
+        "学位": degree ? `${degree}学位` : "",
+        "专业描述": desc
+      },
+      custom: []
+    });
+  }
+
+  return items;
+}
+
+/**
+ * Parses Work / Internship entries into multiple structured items
+ */
+function parseWorkEntries(lines, defaultLabel = "工作经历") {
+  const items = [];
+  const dateRegex = /(\d{4}[./年-]\d{1,2})\s*(?:[-~至到/]\s*(\d{4}[./年-]\d{1,2}|至今|现在|present))/i;
+  const companyRegex = /([\u4e00-\u9fa5A-Za-z0-9（）()]+(?:公司|集团|事务所|银行|中心|医院|学校|有限|科技|网络|信息|技术|企业|工作室|厂|院|所|局|Corp|Inc|Ltd))/;
+  const roleRegex = /([\u4e00-\u9fa5A-Za-z]+(?:工程师|开发|经理|总监|专员|主管|实习生|助理|顾问|分析师|架构师|测试|运维|运营|前端|后端|算法|产品|设计|实习|研究员|专家|负责人))/;
+
+  const chunks = [];
+  let currentChunk = [];
+
+  for (const line of lines) {
+    const hasDate = dateRegex.test(line);
+    const hasCompany = companyRegex.test(line);
+    if ((hasDate || hasCompany) && currentChunk.length > 0) {
+      chunks.push(currentChunk);
+      currentChunk = [];
+    }
+    currentChunk.push(line);
+  }
+  if (currentChunk.length > 0) {
+    chunks.push(currentChunk);
+  }
+
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    const fullText = chunk.join(" ");
+
+    let startDate = "";
+    let endDate = "";
+    const dm = fullText.match(dateRegex);
+    if (dm) {
+      startDate = dm[1].replace(/[./年]/g, "-").replace(/[-.月]$/, "");
+      endDate = dm[2] ? dm[2].replace(/[./年]/g, "-").replace(/[-.月]$/, "") : "至今";
+    }
+
+    let company = "";
+    const cm = fullText.match(companyRegex);
+    if (cm) company = cm[1].trim();
+
+    let role = "";
+    const rm = fullText.match(roleRegex);
+    if (rm) role = rm[1].trim();
+
+    const descLines = chunk.filter((l) => !dateRegex.test(l) && !companyRegex.test(l));
+    const desc = descLines.join("\n");
+
+    items.push({
+      title: company ? `${company} - ${role || defaultLabel}` : `${defaultLabel} ${i + 1}`,
+      values: {
+        "公司": company,
+        "公司名称": company,
+        "开始时间": startDate,
+        "起始时间": startDate,
+        "结束时间": endDate,
+        "职位": role,
+        "职位名称": role,
+        "工作内容": desc,
+        "工作描述": desc,
+        "工作成果": ""
+      },
+      custom: []
+    });
+  }
+
+  return items;
+}
+
+/**
+ * Parses Project entries into multiple structured items
+ */
+function parseProjectEntries(lines) {
+  const items = [];
+  const dateRegex = /(\d{4}[./年-]\d{1,2})\s*(?:[-~至到/]\s*(\d{4}[./年-]\d{1,2}|至今|现在|present))?/i;
+  const projectRegex = /(?:项目名称[:：]?\s*)?([^\n\r,，。]+(?:系统|平台|项目|App|APP|小程序|设计|开发|重构|工程|工具|算法|模块|组件|服务|架构|框架|引擎|网站))/;
+
+  const chunks = [];
+  let currentChunk = [];
+
+  for (const line of lines) {
+    const hasDate = dateRegex.test(line);
+    const hasProjectName = projectRegex.test(line);
+    if ((hasDate || hasProjectName) && currentChunk.length > 0) {
+      chunks.push(currentChunk);
+      currentChunk = [];
+    }
+    currentChunk.push(line);
+  }
+  if (currentChunk.length > 0) {
+    chunks.push(currentChunk);
+  }
+
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    const fullText = chunk.join(" ");
+
+    let startDate = "";
+    let endDate = "";
+    const dm = fullText.match(dateRegex);
+    if (dm) {
+      startDate = dm[1].replace(/[./年]/g, "-").replace(/[-.月]$/, "");
+      endDate = dm[2] ? dm[2].replace(/[./年]/g, "-").replace(/[-.月]$/, "") : "至今";
+    }
+
+    let projectName = "";
+    const pm = fullText.match(projectRegex);
+    if (pm) {
+      projectName = pm[1].trim();
+    } else {
+      projectName = chunk[0]?.slice(0, 30) || `项目经历 ${i + 1}`;
+    }
+
+    let role = "";
+    const roleMatch = fullText.match(/(?:项目角色|担任角色|职位|本人职责|职责)[:：\s]*([^\n\r,，。]+)/);
+    if (roleMatch) {
+      role = roleMatch[1].trim();
+    }
+
+    const descLines = chunk.filter((l) => !dateRegex.test(l) && !projectRegex.test(l));
+    const desc = descLines.join("\n");
+
+    items.push({
+      title: projectName || `项目经历 ${i + 1}`,
+      values: {
+        "项目名称": projectName,
+        "开始时间": startDate,
+        "起始时间": startDate,
+        "结束时间": endDate,
+        "职位": role,
+        "本人职责": role,
+        "项目角色": role,
+        "项目内容": desc,
+        "项目描述": desc,
+        "项目成果": ""
+      },
+      custom: []
+    });
+  }
+
+  return items;
+}
+
+/**
+ * Parses Tech & Computer skills into structured items
+ */
+function parseComputerSkills(lines) {
+  const text = lines.join("\n");
+  const knownTechs = [
+    "Java", "Python", "Go", "Golang", "C++", "C#", "JavaScript", "TypeScript", "HTML/CSS",
+    "React", "Vue", "Angular", "Node.js", "Spring Boot", "Spring", "Django", "Flask",
+    "MySQL", "PostgreSQL", "Redis", "MongoDB", "Elasticsearch",
+    "Docker", "Kubernetes", "Linux", "Git", "Nginx", "Kafka", "Flink", "PyTorch", "TensorFlow"
+  ];
+
+  const found = [];
+  for (const tech of knownTechs) {
+    const escaped = tech.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const reg = new RegExp(`\\b${escaped}\\b`, "i");
+    if (reg.test(text)) {
+      found.push(tech);
+    }
+  }
+
+  const items = [];
+  if (found.length > 0) {
+    // Group into batches of 4-6
+    for (let i = 0; i < found.length; i += 5) {
+      const group = found.slice(i, i + 5).join(" / ");
+      items.push({
+        title: group,
+        values: {
+          "证书名称（技能名称）": group,
+          "掌握程度": "熟练"
+        },
+        custom: []
+      });
+    }
+  } else {
+    // Fallback line by line
+    for (const line of lines.slice(0, 5)) {
+      items.push({
+        title: line.slice(0, 20),
+        values: {
+          "证书名称（技能名称）": line,
+          "掌握程度": "熟练"
+        },
+        custom: []
+      });
+    }
+  }
+
+  return items;
+}
+
+/**
+ * Parses Language entries into structured items
+ */
+function parseLanguageEntries(lines) {
+  const items = [];
+  const text = lines.join("\n");
+  const certs = [
+    { name: "大学英语六级 (CET-6)", regex: /(?:CET[- ]?6|六级)/i },
+    { name: "大学英语四级 (CET-4)", regex: /(?:CET[- ]?4|四级)/i },
+    { name: "托福 (TOEFL)", regex: /TOEFL|托福/i },
+    { name: "雅思 (IELTS)", regex: /IELTS|雅思/i },
+    { name: "专业八级 (TEM-8)", regex: /TEM[- ]?8|专八/i },
+    { name: "专业四级 (TEM-4)", regex: /TEM[- ]?4|专四/i }
+  ];
+
+  for (const c of certs) {
+    if (c.regex.test(text)) {
+      items.push({
+        title: c.name,
+        values: {
+          "外语种类": "英语",
+          "证书名称（技能名称）": c.name,
+          "掌握程度": "良好"
+        },
+        custom: []
+      });
+    }
+  }
+
+  return items;
+}
+
+/**
+ * Parses Award entries into structured items
+ */
+function parseAwardEntries(lines) {
+  const items = [];
+  const dateRegex = /(\d{4}[./年-]\d{1,2}|\d{4}年?)/;
+
+  for (const line of lines.slice(0, 10)) {
+    const dm = line.match(dateRegex);
+    const dateStr = dm ? dm[1].replace(/[./年]/g, "-").replace(/[-.]$/, "") : "";
+    const awardName = line.replace(dateRegex, "").replace(/^[-*•\s]+/, "").trim();
+    if (awardName) {
+      items.push({
+        title: awardName.slice(0, 20),
+        values: {
+          "奖惩名称": awardName,
+          "奖惩时间": dateStr,
+          "奖惩描述": line
+        },
+        custom: []
+      });
+    }
+  }
+
+  return items;
+}
+
+/**
+ * Parses Certificate entries into structured items
+ */
+function parseCertificateEntries(lines) {
+  const items = [];
+  const dateRegex = /(\d{4}[./年-]\d{1,2}|\d{4}年?)/;
+
+  for (const line of lines.slice(0, 10)) {
+    const dm = line.match(dateRegex);
+    const dateStr = dm ? dm[1].replace(/[./年]/g, "-").replace(/[-.]$/, "") : "";
+    const certName = line.replace(dateRegex, "").replace(/^[-*•\s]+/, "").trim();
+    if (certName) {
+      items.push({
+        title: certName.slice(0, 20),
+        values: {
+          "证书名称（技能名称）": certName,
+          "证书获得时间": dateStr
+        },
+        custom: []
+      });
+    }
+  }
+
+  return items;
+}
+
+/**
  * Merges AI extracted sections into local profile without EVER overwriting local high-confidence PII.
+ * Normalizes field keys so they seamlessly map into UI editor fields and autofill matcher!
  */
 export function mergeAiSectionsIntoProfile(localProfile, aiSections) {
   if (!localProfile || typeof localProfile !== "object" || !localProfile.sections) {
@@ -249,10 +675,60 @@ export function mergeAiSectionsIntoProfile(localProfile, aiSections) {
     return localProfile;
   }
 
-  // Merge experience sections only - never touch basic section!
-  for (const secKey of ["education", "work", "project", "skills", "certificates", "awards"]) {
-    if (aiSections[secKey]) {
-      localProfile.sections[secKey] = JSON.parse(JSON.stringify(aiSections[secKey]));
+  // Normalize and merge experience sections - NEVER touch basic PII
+  for (const secKey of ["education", "internship", "work", "project", "computer", "language", "certificates", "awards", "self"]) {
+    const aiSec = aiSections[secKey];
+    if (!aiSec) continue;
+
+    if (aiSec.kind === "repeat" && Array.isArray(aiSec.items)) {
+      const normalizedItems = aiSec.items.map((item, idx) => {
+        const val = item?.values || {};
+        const normVal = { ...val };
+
+        // Normalize education keys
+        if (normVal["学校名称"] && !normVal["学校"]) normVal["学校"] = normVal["学校名称"];
+        if (normVal["学校"] && !normVal["学校名称"]) normVal["学校名称"] = normVal["学校"];
+        if (normVal["起始时间"] && !normVal["开始时间"]) normVal["开始时间"] = normVal["起始时间"];
+        if (normVal["开始时间"] && !normVal["起始时间"]) normVal["起始时间"] = normVal["开始时间"];
+
+        // Normalize work keys
+        if (normVal["公司名称"] && !normVal["公司"]) normVal["公司"] = normVal["公司名称"];
+        if (normVal["公司"] && !normVal["公司名称"]) normVal["公司名称"] = normVal["公司"];
+        if (normVal["职位名称"] && !normVal["职位"]) normVal["职位"] = normVal["职位名称"];
+        if (normVal["职位"] && !normVal["职位名称"]) normVal["职位名称"] = normVal["职位"];
+        if (normVal["工作描述"] && !normVal["工作内容"]) normVal["工作内容"] = normVal["工作描述"];
+        if (normVal["工作内容"] && !normVal["工作描述"]) normVal["工作描述"] = normVal["工作内容"];
+
+        // Normalize project keys
+        if (normVal["项目描述"] && !normVal["项目内容"]) normVal["项目内容"] = normVal["项目描述"];
+        if (normVal["项目内容"] && !normVal["项目描述"]) normVal["项目描述"] = normVal["项目内容"];
+        if (normVal["主要业绩"] && !normVal["项目成果"]) normVal["项目成果"] = normVal["主要业绩"];
+        if (normVal["项目成果"] && !normVal["主要业绩"]) normVal["主要业绩"] = normVal["项目成果"];
+        if (normVal["项目角色"]) {
+          if (!normVal["职位"]) normVal["职位"] = normVal["项目角色"];
+          if (!normVal["本人职责"]) normVal["本人职责"] = normVal["项目角色"];
+        }
+
+        return {
+          title: item.title || normVal["学校"] || normVal["公司"] || normVal["项目名称"] || `${secKey} ${idx + 1}`,
+          values: normVal,
+          custom: item.custom || []
+        };
+      });
+
+      if (normalizedItems.length > 0) {
+        localProfile.sections[secKey] = {
+          key: secKey,
+          title: localProfile.sections[secKey]?.title || aiSec.title || secKey,
+          kind: "repeat",
+          items: normalizedItems
+        };
+      }
+    } else if (aiSec.kind === "simple" && aiSec.values) {
+      if (!localProfile.sections[secKey]) {
+        localProfile.sections[secKey] = { key: secKey, kind: "simple", values: {}, custom: [] };
+      }
+      Object.assign(localProfile.sections[secKey].values, aiSec.values);
     }
   }
 

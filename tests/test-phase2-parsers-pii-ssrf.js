@@ -118,12 +118,14 @@ const mockAiSections = {
 
 mergeAiSectionsIntoProfile(baseProfileV2, mockAiSections);
 
-// Verify experiences were merged
+// Verify experiences were merged with both standard and alias keys
 assert.equal(baseProfileV2.sections.education.items.length, 1);
+assert.equal(baseProfileV2.sections.education.items[0].values["学校"], "北京大学");
 assert.equal(baseProfileV2.sections.education.items[0].values["学校名称"], "北京大学");
 assert.equal(baseProfileV2.sections.work.items.length, 1);
+assert.equal(baseProfileV2.sections.work.items[0].values["公司"], "科技有限公司");
 assert.equal(baseProfileV2.sections.work.items[0].values["公司名称"], "科技有限公司");
-console.log("  ✔ AI experience sections merged into profileV2");
+console.log("  ✔ AI experience sections merged into profileV2 with standard editor keys");
 
 // IRON RULE: Local PII must NEVER be overwritten by AI
 assert.equal(baseProfileV2.sections.basic.values["姓名"], "张三", "AI must never overwrite local name");

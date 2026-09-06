@@ -596,8 +596,8 @@
 
   function getAutofillProgressStep(stage) {
     const text = normalizeText(stage || "", 80);
-    if (/读取本机资料|开始填写|扫描页面并准备填写/.test(text)) {
-      return { index: 1, total: 6, label: "准备本机资料" };
+    if (/读取本机资料|加载已保存资料|开始填写|扫描页面并准备填写|准备简历资料/.test(text)) {
+      return { index: 1, total: 6, label: "准备简历资料" };
     }
     if (/扫描当前页面/.test(text)) {
       return { index: 2, total: 6, label: "扫描当前页面" };
@@ -776,7 +776,7 @@
       return `AI 已优先匹配部分字段，本地规则已兜底补齐其余字段${fallbackReasons ? `：${fallbackReasons}` : ""}。`;
     }
     if (state?.used) {
-      return `AI 已优先匹配字段${usedPhases ? `（${usedPhases}）` : ""}，资料取值和填写仍在本机完成。`;
+      return `AI 已优先匹配字段${usedPhases ? `（${usedPhases}）` : ""}，资料取值和填写仍由浏览器本地完成。`;
     }
     if (state?.fallback) {
       return `AI 不可用，已切换到本地规则兜底${fallbackReasons ? `：${fallbackReasons}` : ""}。`;
@@ -817,8 +817,8 @@
       }
       return "AI 优先匹配 · 本地继续处理";
     }
-    if (/读取本机资料|开始填写|扫描页面并准备填写/.test(stage)) {
-      return "本地规则 · 正在读取资料";
+    if (/读取本机资料|加载已保存资料|开始填写|扫描页面并准备填写|准备简历资料/.test(stage)) {
+      return "本地规则 · 正在准备简历资料";
     }
     if (/扫描当前页面/.test(stage)) {
       return "本地规则 · 正在扫描页面";
@@ -2634,7 +2634,7 @@
         </div>
         <button class="arf-float-close" type="button" data-action="float-hide" title="隐藏">×</button>
       </div>
-      <div class="arf-float-privacy">隐私：资料只保存在本机；插件不会自动提交。</div>
+      <div class="arf-float-privacy">隐私：资料仅保存在浏览器本地；绝不扫描电脑硬盘，也不会自动提交。</div>
       <div class="arf-float-ai" data-role="float-ai" hidden></div>
       <div class="arf-float-progress" data-role="float-progress">
         <div class="arf-float-track">
@@ -2798,7 +2798,7 @@
     const subtitle = document.createElement("div");
     subtitle.className = "arf-subtitle";
     subtitle.dataset.role = "subtitle";
-    subtitle.textContent = "本机简历资料。用于查看、搜索和复制；开始填写会扫描并自动填写当前网页。";
+    subtitle.textContent = "已保存的简历资料。用于查看、搜索和复制；开始填写会扫描并自动填写当前网页。";
     titleWrap.append(title, subtitle);
 
     const headerActions = document.createElement("div");
@@ -2849,7 +2849,7 @@
     const status = document.createElement("div");
     status.className = "arf-meta";
     status.dataset.role = "status";
-    status.textContent = "资料只从本机读取。";
+    status.textContent = "资料仅在浏览器本地加载（保护隐私）。";
 
     const progress = document.createElement("div");
     progress.className = "arf-progress";
@@ -2940,12 +2940,12 @@
         renderProfilePanel();
       }
       if (options.force && profilePanelVisible) {
-        setProfilePanelStatus("已刷新本机简历资料。");
+        setProfilePanelStatus("已刷新简历资料。");
       }
       return profile;
     } catch (error) {
       if (profilePanelVisible) {
-        setProfilePanelStatus(`读取本机资料失败：${error.message}`, true);
+        setProfilePanelStatus(`加载简历资料失败：${error.message}`, true);
       }
       return null;
     } finally {
@@ -5408,7 +5408,7 @@
     }
 
     try {
-      setAutofillProgress("读取本机资料", 8, "本地读取简历资料");
+      setAutofillProgress("准备简历资料", 8, "加载已保存的简历资料");
       await refreshCurrentProfile({ force: true });
       setAutofillProgress("扫描当前页面", 24, "本地扫描页面字段并展开可编辑区域");
       setProfilePanelStatus("正在本地扫描当前页面并准备自动填写...");
@@ -5573,7 +5573,7 @@
       if (element) {
         if (candidate.alreadyMatches) {
           ok = true;
-          note = "当前值已匹配本机资料";
+          note = "当前值已匹配简历资料";
         } else {
           const fillResult = await fillElementSmart(element, candidate.value, field, candidate);
           ok = Boolean(fillResult?.ok);
@@ -6053,7 +6053,7 @@
       const empty = document.createElement("div");
       empty.className = "arf-empty";
       empty.textContent = currentProfileLoadPromise
-        ? "正在读取本机简历资料..."
+        ? "正在加载简历资料..."
         : "点击“设置”后先保存简历资料，这里会显示可参考和复制的内容。";
       list.append(empty);
       return;
@@ -6304,7 +6304,7 @@
           ? `${adapterLabel}正在查看：${getProfileSectionTitle(activeSection) || activeSection.category}。内容可直接选中复制。`
           : totalItems > 0
             ? `${adapterLabel}已加载 ${sections.length} 个分类、${totalItems} 条本地资料。`
-            : `${adapterLabel}资料只从本机读取。`;
+            : `${adapterLabel}资料仅从浏览器本地加载（保护隐私）。`;
       }
     }
 
