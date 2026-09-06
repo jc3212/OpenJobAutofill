@@ -11,6 +11,7 @@ async function runAll() {
 
   try {
     await import("./unit/contracts.test.js");
+    await import("./unit/config.test.js");
     await import("./unit/pii-redactor.test.js");
     await import("./integration/resume-import-service.test.js");
     await import("./integration/ai-privacy-gate.test.js");

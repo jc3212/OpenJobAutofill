@@ -1,6 +1,11 @@
 import { ProfileStore } from "./lib/profile-store.js";
 import { PROTOCOL_ERRORS, MESSAGE_TYPES } from "./lib/protocol.js";
 import { normalizeProfileV2, assertProfileV2Schema } from "./lib/resume-schema.js";
+import {
+  UPSTREAM_REPOSITORY,
+  getUpdateApiUrl,
+  getReleasesUrl
+} from "./lib/config.js";
 
 const DEFAULT_API_CONFIG = {
   mode: "openai-compatible",
@@ -36,9 +41,9 @@ const PROFILE_PANEL_STATE_KEY = "OJAF_PROFILE_PANEL_STATE";
 const MAX_PROFILE_PANEL_STATE_ITEMS = 20;
 const UPDATE_ALARM_NAME = "OJAF_CHECK_RELEASE_UPDATE";
 const UPDATE_CHECK_INTERVAL_MINUTES = 12 * 60;
-const UPDATE_REPOSITORY = "Br1an67/OpenJobAutofill";
-const UPDATE_LATEST_RELEASE_API = `https://api.github.com/repos/${UPDATE_REPOSITORY}/releases/latest`;
-const UPDATE_RELEASES_URL = `https://github.com/${UPDATE_REPOSITORY}/releases`;
+const UPDATE_REPOSITORY = UPSTREAM_REPOSITORY;
+const UPDATE_LATEST_RELEASE_API = getUpdateApiUrl(UPDATE_REPOSITORY);
+const UPDATE_RELEASES_URL = getReleasesUrl(UPDATE_REPOSITORY);
 
 chrome.runtime.onInstalled.addListener(async () => {
   await ProfileStore.ensureInitialized(normalizeProfileV2).catch(() => undefined);
