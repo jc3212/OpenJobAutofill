@@ -28,6 +28,7 @@ const fields = {
   profileFeedback: document.getElementById("profileFeedback"),
   profileSelect: document.getElementById("profileSelect"),
   activeProfileBadge: document.getElementById("activeProfileBadge"),
+  setActiveProfileBtn: document.getElementById("setActiveProfileBtn"),
   uploadResumeBtn: document.getElementById("uploadResumeBtn"),
   viewRawTextBtn: document.getElementById("viewRawTextBtn"),
   createProfileBtn: document.getElementById("createProfileBtn"),
@@ -546,6 +547,7 @@ window.addEventListener("scroll", scheduleProfileSectionSync, { passive: true })
 window.addEventListener("resize", scheduleProfileSectionSync);
 
 fields.profileSelect?.addEventListener("change", handleProfileSelectChange);
+fields.setActiveProfileBtn?.addEventListener("click", handleSetActiveProfile);
 fields.uploadResumeBtn?.addEventListener("click", () => {
   if (fields.resumeUploadInput) {
     fields.resumeUploadInput.value = "";
@@ -619,8 +621,58 @@ function renderProfileSelect() {
     fields.activeProfileBadge.style.display = isCurrentActive ? "inline-block" : "none";
   }
 
+  if (fields.setActiveProfileBtn) {
+    if (isCurrentActive) {
+      fields.setActiveProfileBtn.disabled = true;
+      fields.setActiveProfileBtn.textContent = "✓ 当前填表激活";
+      fields.setActiveProfileBtn.classList.remove("secondary");
+      fields.setActiveProfileBtn.classList.add("ghost");
+      fields.setActiveProfileBtn.title = "当前正在编辑的简历已经是填表激活简历";
+    } else {
+      fields.setActiveProfileBtn.disabled = false;
+      fields.setActiveProfileBtn.textContent = "设为当前填表简历";
+      fields.setActiveProfileBtn.classList.remove("ghost");
+      fields.setActiveProfileBtn.classList.add("secondary");
+      fields.setActiveProfileBtn.title = "将此简历设为网申填表默认激活简历";
+    }
+  }
+
   if (fields.deleteProfileBtn) {
     fields.deleteProfileBtn.disabled = (order.length <= 1);
+  }
+}
+
+async function handleSetActiveProfile() {
+  if (!editingProfileId || !currentEnvelope) return;
+  if (editingProfileId === currentEnvelope.activeProfileId) return;
+
+  const targetProfile = currentEnvelope.profiles[editingProfileId];
+  const profileName = targetProfile?.name || "该简历";
+
+  try {
+    const res = await sendRuntimeMessage({
+      type: MESSAGE_TYPES.SET_ACTIVE_PROFILE,
+      payload: {
+        operationId: generateOpId(),
+        profileId: editingProfileId,
+        baseStateRevision: currentEnvelope.stateRevision
+      }
+    });
+
+    const envRes = await sendRuntimeMessage({ type: MESSAGE_TYPES.GET_ENVELOPE });
+    currentEnvelope = envRes.envelope;
+    baseStateRevision = currentEnvelope.stateRevision;
+
+    renderProfileSelect();
+    showToast(`已将【${profileName}】设为当前填表激活简历！`);
+    setStatus(`当前填表激活简历已切换为：${profileName}`);
+  } catch (err) {
+    if (String(err.message || "").includes(PROTOCOL_ERRORS.CONFLICT)) {
+      openConflictModal();
+      return;
+    }
+    showToast(`切换激活简历失败：${err.message}`, "error");
+    setStatus(`切换激活简历失败：${err.message}`, true);
   }
 }
 
