@@ -952,7 +952,7 @@ async function handleEnhanceWithAi() {
     });
 
     if (aiRes && aiRes.sections) {
-      mergeAiSectionsIntoProfile(currentDraftData.profileV2, aiRes.sections);
+      currentDraftData.profileV2 = mergeAiSectionsIntoProfile(currentDraftData.profileV2, aiRes.sections);
       if (fields.aiEnhanceStatus) {
         fields.aiEnhanceStatus.className = "enhance-status success";
         fields.aiEnhanceStatus.textContent = "✅ AI 分析结构化完成！教育、实习、项目等经历已智能解析。保存后即可在编辑区细化。";

@@ -3,6 +3,7 @@
  */
 
 import { redactPii } from "./pii-redactor.js";
+import { reconcileProfiles } from "./profile-reconciler.js";
 
 /**
  * Education degree weight ranks for calculating highest degree accurately.
@@ -859,73 +860,14 @@ function parseCertificateEntries(lines) {
 
 /**
  * Merges AI extracted sections into local profile without EVER overwriting local high-confidence PII.
- * Normalizes field keys so they seamlessly map into UI editor fields and autofill matcher!
+ * Uses non-destructive reconciliation to preserve unmatched local entries and enrich existing ones.
  */
 export function mergeAiSectionsIntoProfile(localProfile, aiSections) {
-  if (!localProfile || typeof localProfile !== "object" || !localProfile.sections) {
-    return localProfile;
+  if (!localProfile || typeof localProfile !== "object") return localProfile;
+  const reconciled = reconcileProfiles(localProfile, aiSections);
+  if (reconciled && reconciled.sections) {
+    localProfile.sections = reconciled.sections;
+    localProfile.updatedAt = reconciled.updatedAt;
   }
-
-  if (!aiSections || typeof aiSections !== "object") {
-    return localProfile;
-  }
-
-  // Normalize and merge experience sections - NEVER touch basic PII
-  for (const secKey of ["education", "internship", "work", "project", "computer", "language", "certificates", "awards", "self"]) {
-    const aiSec = aiSections[secKey];
-    if (!aiSec) continue;
-
-    if (aiSec.kind === "repeat" && Array.isArray(aiSec.items)) {
-      const normalizedItems = aiSec.items.map((item, idx) => {
-        const val = item?.values || {};
-        const normVal = { ...val };
-
-        // Normalize education keys
-        if (normVal["学校名称"] && !normVal["学校"]) normVal["学校"] = normVal["学校名称"];
-        if (normVal["学校"] && !normVal["学校名称"]) normVal["学校名称"] = normVal["学校"];
-        if (normVal["起始时间"] && !normVal["开始时间"]) normVal["开始时间"] = normVal["起始时间"];
-        if (normVal["开始时间"] && !normVal["起始时间"]) normVal["起始时间"] = normVal["开始时间"];
-
-        // Normalize work keys
-        if (normVal["公司名称"] && !normVal["公司"]) normVal["公司"] = normVal["公司名称"];
-        if (normVal["公司"] && !normVal["公司名称"]) normVal["公司名称"] = normVal["公司"];
-        if (normVal["职位名称"] && !normVal["职位"]) normVal["职位"] = normVal["职位名称"];
-        if (normVal["职位"] && !normVal["职位名称"]) normVal["职位名称"] = normVal["职位"];
-        if (normVal["工作描述"] && !normVal["工作内容"]) normVal["工作内容"] = normVal["工作描述"];
-        if (normVal["工作内容"] && !normVal["工作描述"]) normVal["工作描述"] = normVal["工作内容"];
-
-        // Normalize project keys
-        if (normVal["项目描述"] && !normVal["项目内容"]) normVal["项目内容"] = normVal["项目描述"];
-        if (normVal["项目内容"] && !normVal["项目描述"]) normVal["项目描述"] = normVal["项目内容"];
-        if (normVal["主要业绩"] && !normVal["项目成果"]) normVal["项目成果"] = normVal["主要业绩"];
-        if (normVal["项目成果"] && !normVal["主要业绩"]) normVal["主要业绩"] = normVal["项目成果"];
-        if (normVal["项目角色"]) {
-          if (!normVal["职位"]) normVal["职位"] = normVal["项目角色"];
-          if (!normVal["本人职责"]) normVal["本人职责"] = normVal["项目角色"];
-        }
-
-        return {
-          title: item.title || normVal["学校"] || normVal["公司"] || normVal["项目名称"] || `${secKey} ${idx + 1}`,
-          values: normVal,
-          custom: item.custom || []
-        };
-      });
-
-      if (normalizedItems.length > 0) {
-        localProfile.sections[secKey] = {
-          key: secKey,
-          title: localProfile.sections[secKey]?.title || aiSec.title || secKey,
-          kind: "repeat",
-          items: normalizedItems
-        };
-      }
-    } else if (aiSec.kind === "simple" && aiSec.values) {
-      if (!localProfile.sections[secKey]) {
-        localProfile.sections[secKey] = { key: secKey, kind: "simple", values: {}, custom: [] };
-      }
-      Object.assign(localProfile.sections[secKey].values, aiSec.values);
-    }
-  }
-
   return localProfile;
 }
