@@ -13,6 +13,7 @@ async function runAll() {
     await import("./unit/contracts.test.js");
     await import("./unit/config.test.js");
     await import("./unit/pii-redactor.test.js");
+    await import("./unit/diagnostics.test.js");
     await import("./integration/resume-import-service.test.js");
     await import("./integration/ai-privacy-gate.test.js");
     await import("./unit/profile-store.test.js");

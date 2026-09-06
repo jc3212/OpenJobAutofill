@@ -37,6 +37,36 @@
   let autofillProgressTimer = null;
   let autofillAiState = createAutofillAiState();
 
+  const OJAF_DEBUG_LOGS = true;
+
+  function sanitizeDiagnosticPayload(obj) {
+    if (!obj || typeof obj !== "object") return obj;
+    if (Array.isArray(obj)) {
+      return obj.map((item) => sanitizeDiagnosticPayload(item));
+    }
+    const clean = {};
+    for (const [k, v] of Object.entries(obj)) {
+      if (/^(?:value|val|text|content|password|secret|key|phone|email|name|idcard|id_card|address)$/i.test(k)) {
+        clean[k] = typeof v === "string" ? `[REDACTED_LEN_${v.length}]` : (v === null || v === undefined ? v : "[REDACTED]");
+      } else if (typeof v === "object" && v !== null) {
+        clean[k] = sanitizeDiagnosticPayload(v);
+      } else {
+        clean[k] = v;
+      }
+    }
+    return clean;
+  }
+
+  function logDiagnostic(event, payload = {}) {
+    if (!OJAF_DEBUG_LOGS) return;
+    try {
+      const sanitized = sanitizeDiagnosticPayload(payload);
+      console.log(`[OJAF] ${event}`, sanitized);
+    } catch {
+      // Never crash on diagnostic logging
+    }
+  }
+
   const CONTROL_SELECTOR = [
     'input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="reset"]):not([type="image"])',
     "textarea",
@@ -929,6 +959,7 @@
     lastAutofillDebug = null;
     resetAutofillAiState();
     setAutofillProgress(stage, 4, "准备开始", true);
+    logDiagnostic("Autofill Run Started", { runId: autofillRunId, stage });
     return autofillRunId;
   }
 
@@ -5561,6 +5592,7 @@
     if (isCurrentAutofillRun(runId)) {
       setAutofillProgress("填写匹配项", 94, `本地准备填写 ${autoFillCandidates.length} 项`);
     }
+    logDiagnostic("Autofill Applying Candidates", { runId, candidatesCount: autoFillCandidates.length });
     const results = [];
 
     for (let index = 0; index < autoFillCandidates.length; index += 1) {
@@ -5592,6 +5624,15 @@
         setAutofillProgress("填写匹配项", percent, `本地已处理 ${index + 1}/${autoFillCandidates.length} 项`);
       }
 
+      logDiagnostic("Field Attempt", {
+        id: candidate.id,
+        fieldLabel: candidate.fieldLabel || candidate.sourceLabel || "",
+        ok,
+        note,
+        writeMode: candidate.writeMode || "",
+        hasValue: Boolean(candidate.value)
+      });
+
       results.push({
         id: candidate.id,
         ok,
@@ -5612,6 +5653,14 @@
       message: `页面已标记：绿色为已填写，橙色为待处理。`,
       aiUsage: getAutofillAiSnapshot()
     };
+    logDiagnostic("Autofill Run Completed", {
+      runId,
+      attempted: results.length,
+      filled: filledCount,
+      failed: failedCount,
+      skipped: skippedCount,
+      pending: summary.pending
+    });
     setProfilePanelStatus(`已自动填写 ${filledCount} 项，待处理 ${summary.pending} 项。`);
     setAutofillSummary(summary);
     updateAutofillDebugResults(summary, results);
