@@ -233,7 +233,13 @@ export const ProfileStore = {
       }
 
       // Apply mutation
-      targetProfile.profileV2 = normalizeProfileV2(profileV2);
+      const normalizer = typeof normalizeProfileV2 === "function"
+        ? normalizeProfileV2
+        : (typeof payload?.normalizeProfileV2 === "function" ? payload.normalizeProfileV2 : (p) => p);
+      targetProfile.profileV2 = normalizer(profileV2);
+      if (payload?.name && typeof payload.name === "string" && payload.name.trim()) {
+        targetProfile.name = payload.name.trim();
+      }
       targetProfile.updatedAt = new Date().toISOString();
       targetProfile.revision += 1;
       envelope.stateRevision += 1;

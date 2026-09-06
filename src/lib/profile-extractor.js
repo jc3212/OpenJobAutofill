@@ -69,13 +69,14 @@ export function extractLocalProfileAndPii(rawText) {
   };
 
   // 1. Phone extraction (11-digit Chinese mobile or international format)
-  const phoneMatch = text.match(/(?:(?:\+|00)86[- ]?)?(1[3-9]\d{9})\b/);
+  const phonePattern = /(?:(?:\(?\+?|00)86\)?[- ]?)?(1[3-9]\d(?:[- ]?\d{4}){2}|1[3-9]\d{9})\b/;
+  const phoneMatch = text.match(phonePattern);
   if (phoneMatch) {
-    pii["电话"] = phoneMatch[1];
+    pii["电话"] = phoneMatch[1].replace(/[- ]/g, "");
   } else {
-    const telMatch = text.match(/(?:电话|手机|联系方式|TEL)[:：\s]*(\+?[0-9-]{7,18})/i);
+    const telMatch = text.match(/(?:电话|手机|联系方式|TEL)[:：\s]*(?:\(?\+?86\)?[- ]?)?(\+?[0-9- ]{7,18})/i);
     if (telMatch) {
-      pii["电话"] = telMatch[1].trim();
+      pii["电话"] = telMatch[1].trim().replace(/\s+/g, "");
     }
   }
 
@@ -103,6 +104,12 @@ export function extractLocalProfileAndPii(rawText) {
       const line = rawLines[i].replace(/\s+/g, "");
       if (/^[\u4e00-\u9fa5]{2,4}$/.test(line) && !/^(个人简历|求职简历|基本信息|工作经历|教育经历|个人信息|联系方式)$/.test(line)) {
         pii["姓名"] = rawLines[i].trim();
+        break;
+      }
+      // Check multi-field header line: e.g. "李建国 | 求职意向..." or "张三 / 男 / 28岁"
+      const headerPrefix = rawLines[i].match(/^([\u4e00-\u9fa5]{2,4})\s*[|/]/);
+      if (headerPrefix && !/^(个人简历|求职简历|基本信息|工作经历|教育经历|个人信息|联系方式|求职意向)$/.test(headerPrefix[1].trim())) {
+        pii["姓名"] = headerPrefix[1].trim();
         break;
       }
     }
@@ -263,14 +270,14 @@ export function extractLocalProfileAndPii(rawText) {
  * Robust Multi-Section Segmenter: Extracts Education, Work, Project, Skills, Awards, Languages
  */
 export const SECTION_HEADERS = Object.freeze([
-  { key: "education", regex: /^(?:教育经历|教育背景|学历信息|就读经历|学习经历|教育信息)/ },
-  { key: "internship", regex: /^(?:实习经历|实习经验|学生实践)/ },
-  { key: "work", regex: /^(?:工作经历|工作经验|职业经历|从业经历|工作信息)/ },
-  { key: "project", regex: /^(?:项目经历|项目经验|科研经历|个人项目|项目)/ },
-  { key: "computer", regex: /^(?:专业技能|技能特长|个人技能|IT技能|计算机技能|专业技术|技能清单)/ },
-  { key: "language", regex: /^(?:外语能力|语言能力|外语水平|英语水平)/ },
+  { key: "education", regex: /^(?:教育经历|教育背景|学历信息|就读经历|学习经历|教育信息|教育$)/ },
+  { key: "internship", regex: /^(?:实习经历|实习经验|学生实践|实习$)/ },
+  { key: "work", regex: /^(?:工作经历|工作经验|职业经历|从业经历|工作信息|工作$)/ },
+  { key: "project", regex: /^(?:项目经历|项目经验|科研经历|个人项目|项目实践|项目$)/ },
+  { key: "computer", regex: /^(?:专业技能|技能特长|个人技能|IT技能|计算机技能|专业技术|技能清单|技能$)/ },
+  { key: "language", regex: /^(?:外语能力|语言能力|外语水平|英语水平|外语$)/ },
   { key: "certificates", regex: /^(?:证书|执照|资质证书|职业资格|资格证书)/ },
-  { key: "awards", regex: /^(?:荣誉成果|奖惩情况|所获奖项|奖学金与荣誉|个人荣誉|奖励与荣誉|获奖经历)/ },
+  { key: "awards", regex: /^(?:荣誉成果|奖惩情况|所获奖项|奖学金与荣誉|个人荣誉|奖励与荣誉|获奖经历|荣誉奖项|奖项)/ },
   { key: "self", regex: /^(?:自我评价|个人优势|自我介绍|个人总结|个人简介)/ }
 ]);
 
@@ -279,8 +286,11 @@ export function detectSectionHeader(line) {
   const trimmed = line.trim();
   if (!trimmed) return null;
 
-  // Match leading symbols e.g. #, *, -, •, 【, [, numbers like 1., 一、
-  const headerMatch = trimmed.match(/^[#*\-•\s【\[]*(?:一|二|三|四|五|六|七|八|九|十|\d+)?(?:[、.．\s])*\s*([^\s:：\]】]{2,12})[】\]\s:：]*(.*)$/);
+  // Bullet lines are item descriptions, never section headers
+  if (/^[-*•]\s/.test(trimmed)) return null;
+
+  // Match leading symbols e.g. #, 【, [, numbers like 1., 一、
+  const headerMatch = trimmed.match(/^[#\s【\[]*(?:一|二|三|四|五|六|七|八|九|十|\d+)?(?:[、.．\s])*\s*([^\s:：\]】]{2,12})[】\]\s:：]*(.*)$/);
   if (!headerMatch) return null;
 
   const titleCandidate = headerMatch[1].trim();
@@ -470,7 +480,15 @@ function parseEducationEntries(lines, fallbackDegree = "") {
 
     let major = "";
     const mm = fullText.match(majorRegex);
-    if (mm) major = mm[1].trim();
+    if (mm) {
+      major = mm[1].trim();
+      if (school && major.includes(school)) {
+        major = major.replace(school, "").trim();
+      }
+      if (degree && major.includes(degree)) {
+        major = major.replace(degree, "").trim();
+      }
+    }
 
     const descLines = [];
     for (let j = 0; j < chunk.length; j++) {
@@ -685,9 +703,18 @@ function parseProjectEntries(lines) {
     }
 
     let role = "";
-    const roleMatch = fullText.match(/(?:项目角色|担任角色|职位|本人职责|职责)[:：\s]*([^\n\r,，。]+)/);
-    if (roleMatch) {
-      role = roleMatch[1].trim();
+    for (const l of chunk) {
+      const rm = l.match(/(?:项目角色|担任角色|职位|本人职责|职责)[:：\s]*([^\s,，。|]+)/);
+      if (rm) {
+        role = rm[1].trim();
+        break;
+      }
+    }
+    if (!role) {
+      const roleMatch = fullText.match(/(?:项目角色|担任角色|职位|本人职责|职责)[:：\s]*([^\s,，。|]+)/);
+      if (roleMatch) {
+        role = roleMatch[1].trim();
+      }
     }
 
     const descLines = [];
