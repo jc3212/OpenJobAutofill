@@ -1,3 +1,6 @@
+import { ProfileStore } from "./lib/profile-store.js";
+import { PROTOCOL_ERRORS } from "./lib/protocol.js";
+
 const DEFAULT_API_CONFIG = {
   mode: "openai-compatible",
   baseUrl: "https://api.openai.com/v1",
@@ -37,16 +40,12 @@ const UPDATE_LATEST_RELEASE_API = `https://api.github.com/repos/${UPDATE_REPOSIT
 const UPDATE_RELEASES_URL = `https://github.com/${UPDATE_REPOSITORY}/releases`;
 
 chrome.runtime.onInstalled.addListener(async () => {
+  await ProfileStore.ensureInitialized(normalizeProfileV2).catch(() => undefined);
   const existing = await chrome.storage.local.get([
-    STORAGE_KEYS.profileV2,
     STORAGE_KEYS.apiConfig,
     STORAGE_KEYS.updateState
   ]);
   const next = {};
-
-  if (!existing[STORAGE_KEYS.profileV2]) {
-    next[STORAGE_KEYS.profileV2] = DEFAULT_PROFILE_V2;
-  }
 
   if (!existing[STORAGE_KEYS.apiConfig]) {
     next[STORAGE_KEYS.apiConfig] = DEFAULT_API_CONFIG;
@@ -65,6 +64,7 @@ chrome.runtime.onInstalled.addListener(async () => {
 });
 
 chrome.runtime.onStartup?.addListener(() => {
+  void ProfileStore.ensureInitialized(normalizeProfileV2).catch(() => undefined);
   void setupUpdateAlarm().catch(() => undefined);
   void refreshUpdateBadge().catch(() => undefined);
 });
@@ -99,6 +99,44 @@ async function handleMessage(message) {
   switch (message.type) {
     case "OJAF_GET_SETTINGS":
       return getSettings();
+    case "OJAF_GET_ENVELOPE":
+      await ProfileStore.ensureInitialized(normalizeProfileV2);
+      return ProfileStore.getEnvelope();
+    case "OJAF_GET_ACTIVE_PROFILE_SNAPSHOT":
+      await ProfileStore.ensureInitialized(normalizeProfileV2);
+      return ProfileStore.getActiveSnapshot();
+    case "OJAF_SAVE_PROFILE": {
+      await ProfileStore.ensureInitialized(normalizeProfileV2);
+      const saveRes = await ProfileStore.saveProfile(message.payload || {}, normalizeProfileV2);
+      if (!saveRes.ok) throw new Error(saveRes.error || "SAVE_FAILED");
+      return saveRes;
+    }
+    case "OJAF_SET_ACTIVE_PROFILE": {
+      await ProfileStore.ensureInitialized(normalizeProfileV2);
+      const setRes = await ProfileStore.setActiveProfile(message.payload || {});
+      if (!setRes.ok) throw new Error(setRes.error || "SET_ACTIVE_FAILED");
+      return setRes;
+    }
+    case "OJAF_CREATE_PROFILE": {
+      await ProfileStore.ensureInitialized(normalizeProfileV2);
+      const createRes = await ProfileStore.createProfile(message.payload || {}, normalizeProfileV2);
+      if (!createRes.ok) throw new Error(createRes.error || "CREATE_FAILED");
+      return createRes;
+    }
+    case "OJAF_DELETE_PROFILE": {
+      await ProfileStore.ensureInitialized(normalizeProfileV2);
+      const delRes = await ProfileStore.deleteProfile(message.payload || {});
+      if (!delRes.ok) throw new Error(delRes.error || "DELETE_FAILED");
+      return delRes;
+    }
+    case "OJAF_RENAME_PROFILE": {
+      await ProfileStore.ensureInitialized(normalizeProfileV2);
+      const renRes = await ProfileStore.renameProfile(message.payload || {});
+      if (!renRes.ok) throw new Error(renRes.error || "RENAME_FAILED");
+      return renRes;
+    }
+    case "OJAF_PARSE_RESUME_WITH_AI":
+      return parseResumeWithAi(message.payload || {});
     case "OJAF_OPEN_OPTIONS":
       await chrome.runtime.openOptionsPage();
       return {};
@@ -130,23 +168,21 @@ async function handleMessage(message) {
 }
 
 async function getSettings() {
-  const values = await chrome.storage.local.get([
-    STORAGE_KEYS.profileV2,
-    STORAGE_KEYS.apiConfig
-  ]);
+  await ProfileStore.ensureInitialized(normalizeProfileV2);
+  const snapshot = await ProfileStore.getActiveSnapshot();
+  const values = await chrome.storage.local.get([STORAGE_KEYS.apiConfig]);
   return {
-    profileV2: normalizeProfileV2(values[STORAGE_KEYS.profileV2] || DEFAULT_PROFILE_V2),
+    profileV2: snapshot?.profileV2 || DEFAULT_PROFILE_V2,
     apiConfig: { ...DEFAULT_API_CONFIG, ...(values[STORAGE_KEYS.apiConfig] || {}) }
   };
 }
 
 async function saveSettings(payload) {
-  const next = {};
-
   if (payload.profileV2) {
-    next[STORAGE_KEYS.profileV2] = normalizeProfileV2(payload.profileV2);
+    throw new Error(PROTOCOL_ERRORS.DEPRECATED_WRITE_PROTOCOL);
   }
 
+  const next = {};
   if (payload.apiConfig) {
     next[STORAGE_KEYS.apiConfig] = { ...DEFAULT_API_CONFIG, ...payload.apiConfig };
   }
@@ -157,6 +193,7 @@ async function saveSettings(payload) {
 
 async function clearSettings() {
   await chrome.storage.local.clear();
+  await ProfileStore.ensureInitialized(normalizeProfileV2);
   return { cleared: true };
 }
 
@@ -1277,4 +1314,192 @@ function getByPath(source, path) {
     current = current[part];
   }
   return current;
+}
+
+function validateEndpointUrl(url, allowLocalEndpoints = false) {
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error("API 地址格式不正确。");
+  }
+
+  if (parsed.protocol !== "https:" && !allowLocalEndpoints) {
+    throw new Error("为保障安全，API 请求仅允许使用 HTTPS 协议。如需使用本地/局域网接口，请在设置中开启对应选项。");
+  }
+
+  const rawHostname = parsed.hostname.toLowerCase();
+  const hostname = rawHostname.replace(/^\[|\]$/g, "");
+  const isPrivateOrLocal =
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "::1" ||
+    hostname === "0.0.0.0" ||
+    hostname.endsWith(".local") ||
+    hostname.endsWith(".internal") ||
+    /^10\./.test(hostname) ||
+    /^192\.168\./.test(hostname) ||
+    /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(hostname) ||
+    /^169\.254\./.test(hostname) ||
+    /^fc00:/i.test(hostname) ||
+    /^fe80:/i.test(hostname) ||
+    /^0x/i.test(hostname) ||
+    /^\d+$/.test(hostname);
+
+  if (isPrivateOrLocal && !allowLocalEndpoints) {
+    throw new Error("为防止内网穿透与安全风险，默认禁止请求私网或本地回环地址。如需使用本地 Ollama 等服务，请在高级设置中开启“允许本地/局域网端点”。");
+  }
+
+  return true;
+}
+
+function cleanPrototypePollution(obj, depth = 0) {
+  if (depth > 6 || !obj || typeof obj !== "object") {
+    return obj;
+  }
+  if (Array.isArray(obj)) {
+    return obj.map((item) => cleanPrototypePollution(item, depth + 1));
+  }
+  const clean = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (key === "__proto__" || key === "constructor" || key === "prototype") {
+      continue;
+    }
+    clean[key] = cleanPrototypePollution(value, depth + 1);
+  }
+  return clean;
+}
+
+async function parseResumeWithAi(payload) {
+  const previewText = String(payload?.previewText || payload?.rawText || "").trim();
+  if (!previewText) {
+    throw new Error("外发给 AI 的经历文本内容为空。");
+  }
+  if (previewText.length > 100000) {
+    throw new Error("经历文本长度超过 100,000 字符限制。");
+  }
+
+  const settings = await chrome.storage.local.get([STORAGE_KEYS.apiConfig]);
+  const apiConfig = { ...DEFAULT_API_CONFIG, ...(settings[STORAGE_KEYS.apiConfig] || {}) };
+  const targetUrl = apiConfig.mode === "custom" ? apiConfig.customUrl : apiConfig.baseUrl;
+  validateEndpointUrl(targetUrl, apiConfig.allowLocalEndpoints);
+
+  const systemPrompt = [
+    "You are a professional resume structure analyzer.",
+    "Your job is to extract structured educational background, work experience, project experience, skills, certificates, and awards from the given text.",
+    "Return strict JSON only. Do not wrap with markdown blocks. Do not invent any personal identification values.",
+    "The returned JSON must have this schema:",
+    JSON.stringify({
+      sections: {
+        education: {
+          key: "education",
+          title: "教育经历",
+          kind: "repeat",
+          items: [{
+            values: { "学校名称": "", "专业": "", "学历": "", "起始时间": "", "结束时间": "" },
+            custom: []
+          }]
+        },
+        work: {
+          key: "work",
+          title: "工作经历",
+          kind: "repeat",
+          items: [{
+            values: { "公司名称": "", "职位名称": "", "所属部门": "", "起始时间": "", "结束时间": "", "工作描述": "" },
+            custom: []
+          }]
+        },
+        project: {
+          key: "project",
+          title: "项目经历",
+          kind: "repeat",
+          items: [{
+            values: { "项目名称": "", "项目角色": "", "起始时间": "", "结束时间": "", "项目描述": "", "主要业绩": "" },
+            custom: []
+          }]
+        },
+        skills: {
+          key: "skills",
+          title: "专业技能",
+          kind: "simple",
+          values: { "专业技能掌握情况": "" },
+          custom: []
+        },
+        certificates: {
+          key: "certificates",
+          title: "证书与执照",
+          kind: "repeat",
+          items: [{
+            values: { "证书名称": "", "获得时间": "" },
+            custom: []
+          }]
+        },
+        awards: {
+          key: "awards",
+          title: "奖励与荣誉",
+          kind: "repeat",
+          items: [{
+            values: { "奖项名称": "", "获奖时间": "" },
+            custom: []
+          }]
+        }
+      }
+    }, null, 2)
+  ].join("\n");
+
+  const userPrompt = [
+    "Please extract the structured experience sections from this text:",
+    "---",
+    previewText,
+    "---",
+    "Return JSON only."
+  ].join("\n");
+
+  const messages = [
+    { role: "system", content: systemPrompt },
+    { role: "user", content: userPrompt }
+  ];
+
+  const rawAiResult = await callAi(apiConfig, messages, { profile: {}, scan: {} });
+  if (typeof rawAiResult !== "string" || rawAiResult.length > 100000) {
+    throw new Error("AI 响应过大或格式不正确。");
+  }
+
+  const cleanedText = rawAiResult.trim().replace(/^```(?:json)?/i, "").replace(/```$/i, "").trim();
+  let parsed;
+  try {
+    parsed = JSON.parse(cleanedText);
+  } catch (err) {
+    const candidate = extractFirstJson(cleanedText);
+    parsed = candidate ? safeJsonParse(candidate) : null;
+    if (!parsed) {
+      throw new Error(`AI 返回的内容不是有效的 JSON 结构: ${cleanedText.slice(0, 300)}`);
+    }
+  }
+
+  const safeObj = cleanPrototypePollution(parsed);
+
+  if (!safeObj || typeof safeObj !== "object" || !safeObj.sections || typeof safeObj.sections !== "object") {
+    throw new Error("AI 返回的结果缺少有效 sections 结构。");
+  }
+
+  let hasExperience = false;
+  for (const sec of Object.values(safeObj.sections)) {
+    if (sec?.kind === "repeat" && Array.isArray(sec.items) && sec.items.length > 0) {
+      hasExperience = true;
+      break;
+    }
+    if (sec?.kind === "simple" && sec.values && Object.keys(sec.values).length > 0) {
+      hasExperience = true;
+      break;
+    }
+  }
+  if (!hasExperience) {
+    throw new Error("AI 未能从文本中提取出有效经历内容。");
+  }
+
+  return {
+    ok: true,
+    aiSections: safeObj.sections
+  };
 }

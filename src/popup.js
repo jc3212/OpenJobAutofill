@@ -6,8 +6,12 @@ const els = {
   clearMarksBtn: document.getElementById("clearMarksBtn"),
   updateStatus: document.getElementById("updateStatus"),
   checkUpdateBtn: document.getElementById("checkUpdateBtn"),
-  openUpdateBtn: document.getElementById("openUpdateBtn")
+  openUpdateBtn: document.getElementById("openUpdateBtn"),
+  activeProfileSelect: document.getElementById("activeProfileSelect")
 };
+
+let currentActiveProfileId = "";
+let currentStateRevision = 1;
 
 const DEFAULT_START_LABEL = els.startAutofillBtn.textContent;
 const DEFAULT_CHECK_UPDATE_LABEL = els.checkUpdateBtn.textContent;
@@ -29,15 +33,69 @@ els.openUpdateBtn.addEventListener("click", () => {
   void openUpdatePage();
 });
 
+if (els.activeProfileSelect) {
+  els.activeProfileSelect.addEventListener("change", async () => {
+    const selectedId = els.activeProfileSelect.value;
+    if (!selectedId || selectedId === currentActiveProfileId) return;
+    try {
+      const operationId = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : `op_${Date.now()}`;
+      const res = await sendRuntimeMessage({
+        type: "OJAF_SET_ACTIVE_PROFILE",
+        payload: {
+          operationId,
+          profileId: selectedId,
+          baseStateRevision: currentStateRevision
+        }
+      });
+      currentActiveProfileId = selectedId;
+      currentStateRevision = res?.stateRevision || currentStateRevision + 1;
+      const profileName = els.activeProfileSelect.options[els.activeProfileSelect.selectedIndex]?.text || selectedId;
+      setStatus(`已切换当前填表简历为「${profileName}」`);
+    } catch (err) {
+      setStatus(`切换简历失败：${err.message}`, true);
+      await syncProfiles();
+    }
+  });
+}
+
 initialize();
 
 async function initialize() {
   try {
     setStatus("点击开始填写后，右下角会实时显示当前是本地规则还是 AI；AI 不可用也能继续用本地规则填写。");
+    await syncProfiles();
     await syncUpdateStatus();
     await syncRuntimeState();
   } catch (error) {
     setStatus(`读取页面失败：${error.message}`, true);
+  }
+}
+
+async function syncProfiles() {
+  if (!els.activeProfileSelect) return;
+  try {
+    const res = await sendRuntimeMessage({ type: "OJAF_GET_ENVELOPE" });
+    const envelope = res?.envelope;
+    if (!envelope || !envelope.profiles) return;
+
+    currentActiveProfileId = envelope.activeProfileId || "";
+    currentStateRevision = envelope.stateRevision || 1;
+
+    els.activeProfileSelect.innerHTML = "";
+    const order = Array.isArray(envelope.profileOrder) ? envelope.profileOrder : Object.keys(envelope.profiles);
+    for (const id of order) {
+      const prof = envelope.profiles[id];
+      if (!prof) continue;
+      const opt = document.createElement("option");
+      opt.value = id;
+      opt.textContent = prof.name || "未命名简历";
+      if (id === currentActiveProfileId) {
+        opt.selected = true;
+      }
+      els.activeProfileSelect.appendChild(opt);
+    }
+  } catch (err) {
+    console.warn("syncProfiles failed:", err);
   }
 }
 

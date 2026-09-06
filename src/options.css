@@ -745,5 +745,263 @@ pre.error {
   .structured-custom-row {
     grid-template-columns: 1fr;
   }
-
 }
+
+/* ==========================================================================
+   Profile Toolbar & Manage Actions
+   ========================================================================== */
+.profile-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.6);
+}
+
+.profile-select-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.profile-select-group label {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.profile-select-group select {
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.badge.active-badge {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: 12px;
+  background: rgba(15, 107, 79, 0.12);
+  color: var(--green);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.badge.inactive-badge {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: 12px;
+  background: rgba(111, 106, 96, 0.12);
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.profile-manage-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.profile-manage-actions button {
+  min-height: 32px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+/* ==========================================================================
+   Modals & Drawer Overlays
+   ========================================================================== */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(20, 20, 20, 0.48);
+  backdrop-filter: blur(3px);
+}
+
+.modal-overlay[hidden] {
+  display: none !important;
+}
+
+.modal-card {
+  width: min(100%, 720px);
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.18);
+  overflow: hidden;
+}
+
+.modal-card.modal-sm {
+  width: min(100%, 460px);
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg);
+}
+
+.modal-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.close-btn {
+  width: 28px;
+  height: 28px;
+  font-size: 18px;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+}
+
+.modal-body {
+  padding: 20px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.modal-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.modal-field label {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.modal-field input[type="text"],
+.modal-field textarea {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 13px;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+
+.field-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.draft-warnings {
+  padding: 10px 14px;
+  border: 1px solid rgba(178, 59, 59, 0.2);
+  border-radius: 8px;
+  background: rgba(178, 59, 59, 0.06);
+  color: var(--red);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.draft-pii-card {
+  padding: 12px 14px;
+  border: 1px solid rgba(15, 107, 79, 0.2);
+  border-radius: 10px;
+  background: rgba(15, 107, 79, 0.05);
+}
+
+.draft-card-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--green);
+  margin-bottom: 8px;
+}
+
+.draft-pii-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 6px 12px;
+  font-size: 12px;
+}
+
+.draft-pii-item {
+  color: var(--ink);
+}
+
+.draft-pii-label {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.ai-enhance-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  background: rgba(248, 245, 239, 0.5);
+}
+
+.ai-enhance-bar button {
+  align-self: flex-start;
+}
+
+.enhance-status {
+  font-size: 12px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: rgba(15, 107, 79, 0.1);
+  color: var(--green);
+}
+
+.modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px;
+  border-top: 1px solid var(--line);
+  background: var(--bg);
+  gap: 12px;
+}
+
+.modal-footer .checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.footer-buttons {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+

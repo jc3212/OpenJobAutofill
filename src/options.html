@@ -54,7 +54,21 @@
               <h2>简历资料</h2>
               <p class="hint">这里按通用网申栏目拆开填写。保存后资料只保存在本机浏览器里，需要迁移或备份时再导出资料备份。</p>
             </div>
+            <div class="profile-toolbar">
+              <div class="profile-select-group">
+                <label for="profileSelect">正在编辑简历：</label>
+                <select id="profileSelect" class="profile-select"></select>
+                <span id="activeProfileBadge" class="badge active-badge" title="当前填表默认使用的简历">填表激活</span>
+              </div>
+              <div class="profile-manage-actions">
+                <button id="uploadResumeBtn" class="secondary" type="button">📄 上传简历 (PDF/Word/JSON)</button>
+                <button id="createProfileBtn" class="secondary" type="button">+ 新建简历</button>
+                <button id="renameProfileBtn" class="ghost" type="button">✏️ 重命名</button>
+                <button id="deleteProfileBtn" class="ghost danger" type="button">🗑️ 删除</button>
+              </div>
+            </div>
           </div>
+          <input id="resumeUploadInput" type="file" accept=".pdf,.docx,.json" hidden />
           <div id="profileSectionEditor" class="profile-section-editor"></div>
           <div class="actions profile-actions">
             <button id="saveProfile" type="button">保存资料</button>
@@ -198,6 +212,66 @@
     </main>
     <div id="toast" class="toast" role="status" aria-live="polite" aria-atomic="true" hidden></div>
 
-    <script src="./options.js"></script>
+    <!-- Draft Preview Modal -->
+    <div id="draftModal" class="modal-overlay" hidden>
+      <div class="modal-card">
+        <div class="modal-header">
+          <h3>📄 简历文件解析草稿确认</h3>
+          <button id="closeDraftModal" class="ghost close-btn" type="button">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="modal-field">
+            <label for="draftProfileName">简历名称：</label>
+            <input id="draftProfileName" type="text" placeholder="例如：张三-后端开发" />
+          </div>
+          <div id="draftWarnings" class="draft-warnings" hidden></div>
+          <div class="draft-pii-card">
+            <div class="draft-card-title">🔒 本地识别并隔离的基础个人信息（不会外发给 AI）：</div>
+            <div id="draftPiiSummary" class="draft-pii-grid"></div>
+          </div>
+          <div class="modal-field">
+            <div class="field-header">
+              <label for="draftPreviewText">经历正文（可自由编辑，若点击下方的 AI 增强将发送此框内容）：</label>
+              <span id="draftCharCount" class="hint">0 字符</span>
+            </div>
+            <textarea id="draftPreviewText" rows="7"></textarea>
+          </div>
+          <div class="ai-enhance-bar">
+            <button id="enhanceWithAiBtn" class="secondary" type="button">🤖 使用 AI 增强经历结构化</button>
+            <span id="aiEndpointNotice" class="hint">未点击前不会发起任何网络请求。点击后仅发送上方文本。</span>
+          </div>
+          <div id="aiEnhanceStatus" class="enhance-status" hidden></div>
+        </div>
+        <div class="modal-footer">
+          <label class="checkbox-label">
+            <input id="draftSetActiveCheckbox" type="checkbox" /> 同时设为当前填表激活简历
+          </label>
+          <div class="footer-buttons">
+            <button id="cancelDraftBtn" class="ghost" type="button">取消放弃</button>
+            <button id="confirmDraftBtn" type="button">保存为新简历</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Conflict Dialog Modal -->
+    <div id="conflictModal" class="modal-overlay" hidden>
+      <div class="modal-card modal-sm">
+        <div class="modal-header">
+          <h3>⚠️ 状态冲突提示</h3>
+          <button id="closeConflictModal" class="ghost close-btn" type="button">×</button>
+        </div>
+        <div class="modal-body">
+          <p>检测到其他页面已更新简历状态，直接保存可能产生不可预期的覆盖。</p>
+          <p>您的当前编辑草稿已完好保留。请选择接下来的操作：</p>
+        </div>
+        <div class="modal-footer">
+          <button id="conflictReloadBtn" class="ghost" type="button">重新加载最新状态（放弃本地修改）</button>
+          <button id="conflictSaveAsNewBtn" type="button">另存为新简历</button>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="./options.js"></script>
   </body>
 </html>

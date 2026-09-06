@@ -1,3 +1,8 @@
+import { PROTOCOL_ERRORS } from "./lib/protocol.js";
+import { parseDocxFile } from "./lib/docx-parser.js";
+import { parsePdfFile } from "./lib/pdf-parser.js";
+import { extractLocalProfileAndPii, mergeAiSectionsIntoProfile } from "./lib/profile-extractor.js";
+
 const fields = {
   apiMode: document.getElementById("apiMode"),
   apiKey: document.getElementById("apiKey"),
@@ -20,6 +25,33 @@ const fields = {
   profileTips: document.getElementById("profileTips"),
   profileFileInput: document.getElementById("profileFileInput"),
   profileFeedback: document.getElementById("profileFeedback"),
+  profileSelect: document.getElementById("profileSelect"),
+  activeProfileBadge: document.getElementById("activeProfileBadge"),
+  uploadResumeBtn: document.getElementById("uploadResumeBtn"),
+  createProfileBtn: document.getElementById("createProfileBtn"),
+  renameProfileBtn: document.getElementById("renameProfileBtn"),
+  deleteProfileBtn: document.getElementById("deleteProfileBtn"),
+  resumeUploadInput: document.getElementById("resumeUploadInput"),
+
+  draftModal: document.getElementById("draftModal"),
+  closeDraftModal: document.getElementById("closeDraftModal"),
+  draftProfileName: document.getElementById("draftProfileName"),
+  draftWarnings: document.getElementById("draftWarnings"),
+  draftPiiSummary: document.getElementById("draftPiiSummary"),
+  draftPreviewText: document.getElementById("draftPreviewText"),
+  draftCharCount: document.getElementById("draftCharCount"),
+  enhanceWithAiBtn: document.getElementById("enhanceWithAiBtn"),
+  aiEndpointNotice: document.getElementById("aiEndpointNotice"),
+  aiEnhanceStatus: document.getElementById("aiEnhanceStatus"),
+  draftSetActiveCheckbox: document.getElementById("draftSetActiveCheckbox"),
+  cancelDraftBtn: document.getElementById("cancelDraftBtn"),
+  confirmDraftBtn: document.getElementById("confirmDraftBtn"),
+
+  conflictModal: document.getElementById("conflictModal"),
+  closeConflictModal: document.getElementById("closeConflictModal"),
+  conflictReloadBtn: document.getElementById("conflictReloadBtn"),
+  conflictSaveAsNewBtn: document.getElementById("conflictSaveAsNewBtn"),
+
   apiFeedback: document.getElementById("apiFeedback"),
   apiPreviewBox: document.getElementById("apiPreviewBox"),
   apiPreview: document.getElementById("apiPreview"),
@@ -464,6 +496,12 @@ let profileHasUnsavedChanges = false;
 let profileSaveFeedbackTimer = 0;
 let toastTimer = 0;
 
+let currentEnvelope = null;
+let editingProfileId = null;
+let baseProfileRevision = null;
+let baseStateRevision = null;
+let currentDraftData = null;
+
 document.getElementById("settingsForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   await saveApiSettings();
@@ -503,6 +541,28 @@ fields.openUpdateButton?.addEventListener("click", () => {
 window.addEventListener("scroll", scheduleProfileSectionSync, { passive: true });
 window.addEventListener("resize", scheduleProfileSectionSync);
 
+fields.profileSelect?.addEventListener("change", handleProfileSelectChange);
+fields.uploadResumeBtn?.addEventListener("click", () => {
+  if (fields.resumeUploadInput) {
+    fields.resumeUploadInput.value = "";
+    fields.resumeUploadInput.click();
+  }
+});
+fields.resumeUploadInput?.addEventListener("change", handleResumeUpload);
+fields.createProfileBtn?.addEventListener("click", handleCreateProfile);
+fields.renameProfileBtn?.addEventListener("click", handleRenameProfile);
+fields.deleteProfileBtn?.addEventListener("click", handleDeleteProfile);
+
+fields.closeDraftModal?.addEventListener("click", closeDraftModal);
+fields.cancelDraftBtn?.addEventListener("click", closeDraftModal);
+fields.draftPreviewText?.addEventListener("input", updateDraftCharCount);
+fields.enhanceWithAiBtn?.addEventListener("click", handleEnhanceWithAi);
+fields.confirmDraftBtn?.addEventListener("click", handleConfirmDraft);
+
+fields.closeConflictModal?.addEventListener("click", closeConflictModal);
+fields.conflictReloadBtn?.addEventListener("click", handleConflictReload);
+fields.conflictSaveAsNewBtn?.addEventListener("click", handleConflictSaveAsNew);
+
 loadSettings();
 loadUpdateStatus();
 
@@ -515,14 +575,455 @@ window.addEventListener("beforeunload", (event) => {
   event.returnValue = "";
 });
 
+function generateOpId() {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  return `op_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function renderProfileSelect() {
+  if (!fields.profileSelect || !currentEnvelope) return;
+  fields.profileSelect.innerHTML = "";
+
+  const order = Array.isArray(currentEnvelope.profileOrder) && currentEnvelope.profileOrder.length > 0
+    ? currentEnvelope.profileOrder
+    : Object.keys(currentEnvelope.profiles);
+
+  for (const id of order) {
+    const p = currentEnvelope.profiles[id];
+    if (!p) continue;
+    const option = document.createElement("option");
+    option.value = id;
+    const isActive = (id === currentEnvelope.activeProfileId);
+    option.textContent = `${p.name || "未命名简历"}${isActive ? " (填表激活)" : ""}`;
+    fields.profileSelect.appendChild(option);
+  }
+
+  fields.profileSelect.value = editingProfileId;
+
+  const isCurrentActive = (editingProfileId === currentEnvelope.activeProfileId);
+  if (fields.activeProfileBadge) {
+    fields.activeProfileBadge.style.display = isCurrentActive ? "inline-block" : "none";
+  }
+
+  if (fields.deleteProfileBtn) {
+    fields.deleteProfileBtn.disabled = (order.length <= 1);
+  }
+}
+
+async function handleProfileSelectChange(event) {
+  const targetId = event.target.value;
+  if (targetId === editingProfileId) return;
+
+  if (profileHasUnsavedChanges) {
+    const confirmLeave = window.confirm("当前简历有未保存的修改，切换将放弃未保存内容，是否继续？");
+    if (!confirmLeave) {
+      fields.profileSelect.value = editingProfileId;
+      return;
+    }
+  }
+
+  editingProfileId = targetId;
+  const targetProfile = currentEnvelope?.profiles?.[editingProfileId];
+  if (targetProfile) {
+    baseProfileRevision = targetProfile.revision;
+    baseStateRevision = currentEnvelope.stateRevision;
+    renderProfileSectionEditor(targetProfile.profileV2);
+    setProfileSaved(`已切换到简历：${targetProfile.name}`);
+    renderProfileSelect();
+    scheduleProfileSectionSync();
+  }
+}
+
+async function handleCreateProfile() {
+  const name = window.prompt("请输入新简历名称：", "新简历");
+  if (!name || !name.trim()) return;
+
+  try {
+    const res = await sendRuntimeMessage({
+      type: "OJAF_CREATE_PROFILE",
+      payload: {
+        operationId: generateOpId(),
+        name: name.trim(),
+        profileV2: createEmptyProfileV2(),
+        setActive: false,
+        baseStateRevision: currentEnvelope.stateRevision
+      }
+    });
+
+    profileHasUnsavedChanges = false;
+    const envRes = await sendRuntimeMessage({ type: "OJAF_GET_ENVELOPE" });
+    currentEnvelope = envRes.envelope;
+    editingProfileId = res.profileId;
+    baseProfileRevision = 1;
+    baseStateRevision = res.stateRevision;
+
+    renderProfileSelect();
+    renderProfileSectionEditor(currentEnvelope.profiles[editingProfileId].profileV2);
+    setProfileSaved(`已创建新简历：${name.trim()}`);
+    showToast(`已创建简历：${name.trim()}`);
+  } catch (error) {
+    showToast(`创建简历失败：${error.message}`, "error");
+    setStatus(`创建简历失败：${error.message}`, true);
+  }
+}
+
+async function handleRenameProfile() {
+  const currentProf = currentEnvelope?.profiles?.[editingProfileId];
+  if (!currentProf) return;
+
+  const newName = window.prompt("请输入新的简历名称：", currentProf.name);
+  if (!newName || !newName.trim() || newName.trim() === currentProf.name) return;
+
+  try {
+    const res = await sendRuntimeMessage({
+      type: "OJAF_RENAME_PROFILE",
+      payload: {
+        operationId: generateOpId(),
+        profileId: editingProfileId,
+        newName: newName.trim(),
+        baseStateRevision: currentEnvelope.stateRevision
+      }
+    });
+
+    currentProf.name = newName.trim();
+    currentEnvelope.stateRevision = res.stateRevision;
+    baseStateRevision = res.stateRevision;
+    renderProfileSelect();
+    showToast("重命名成功。");
+  } catch (error) {
+    showToast(`重命名失败：${error.message}`, "error");
+    setStatus(`重命名失败：${error.message}`, true);
+  }
+}
+
+async function handleDeleteProfile() {
+  const currentProf = currentEnvelope?.profiles?.[editingProfileId];
+  if (!currentProf) return;
+
+  if (currentEnvelope.profileOrder.length <= 1) {
+    window.alert("至少保留一份简历，无法删除。");
+    return;
+  }
+
+  const confirmDelete = window.confirm(`确定要删除简历【${currentProf.name}】吗？删除后无法恢复。`);
+  if (!confirmDelete) return;
+
+  try {
+    const res = await sendRuntimeMessage({
+      type: "OJAF_DELETE_PROFILE",
+      payload: {
+        operationId: generateOpId(),
+        profileId: editingProfileId,
+        baseStateRevision: currentEnvelope.stateRevision
+      }
+    });
+
+    profileHasUnsavedChanges = false;
+    const envRes = await sendRuntimeMessage({ type: "OJAF_GET_ENVELOPE" });
+    currentEnvelope = envRes.envelope;
+    editingProfileId = res.activeProfileId;
+    baseProfileRevision = currentEnvelope.profiles[editingProfileId].revision;
+    baseStateRevision = res.stateRevision;
+
+    renderProfileSelect();
+    renderProfileSectionEditor(currentEnvelope.profiles[editingProfileId].profileV2);
+    setProfileSaved("已删除简历。");
+    showToast("已删除简历。");
+  } catch (error) {
+    showToast(`删除失败：${error.message}`, "error");
+    setStatus(`删除失败：${error.message}`, true);
+  }
+}
+
+async function handleResumeUpload(event) {
+  const file = event.target.files?.[0];
+  if (!file) return;
+
+  const fileName = file.name || "";
+  const ext = fileName.slice(fileName.lastIndexOf(".")).toLowerCase();
+
+  try {
+    showToast("正在读取并解析文件...", "busy", 2000);
+    setStatus("正在解析上传的文件...");
+
+    if (ext === ".json") {
+      const text = await file.text();
+      const profileV2 = parseImportedProfileBackup(text);
+      const defaultName = fileName.replace(/\.[^/.]+$/, "");
+      openDraftModal({
+        name: defaultName,
+        profileV2,
+        cleanText: "(从 JSON 文件导入结构化资料)",
+        warnings: [],
+        pii: { "姓名": profileV2?.sections?.basic?.values?.["姓名"] || "" }
+      });
+      return;
+    }
+
+    if (ext === ".docx") {
+      const buffer = await file.arrayBuffer();
+      const { text, warnings } = await parseDocxFile(buffer);
+      const { profileV2, pii, cleanText } = extractLocalProfileAndPii(text);
+      const defaultName = pii["姓名"] ? `${pii["姓名"]}-简历` : fileName.replace(/\.[^/.]+$/, "");
+      openDraftModal({
+        name: defaultName,
+        profileV2,
+        cleanText,
+        warnings,
+        pii
+      });
+      return;
+    }
+
+    if (ext === ".pdf") {
+      const buffer = await file.arrayBuffer();
+      const { text, warnings } = await parsePdfFile(buffer);
+      const { profileV2, pii, cleanText } = extractLocalProfileAndPii(text);
+      const defaultName = pii["姓名"] ? `${pii["姓名"]}-简历` : fileName.replace(/\.[^/.]+$/, "");
+      openDraftModal({
+        name: defaultName,
+        profileV2,
+        cleanText,
+        warnings,
+        pii
+      });
+      return;
+    }
+
+    showToast("不支持的文件格式，仅支持 .pdf, .docx, .json", "error");
+  } catch (err) {
+    setStatus(`文件解析失败：${err.message}`, true);
+    showToast(`解析失败：${err.message}`, "error");
+  } finally {
+    if (fields.resumeUploadInput) fields.resumeUploadInput.value = "";
+  }
+}
+
+function openDraftModal(draftData) {
+  currentDraftData = draftData;
+  if (!fields.draftModal) return;
+
+  if (fields.draftProfileName) fields.draftProfileName.value = draftData.name || "新简历";
+  if (fields.draftPreviewText) {
+    fields.draftPreviewText.value = draftData.cleanText || "";
+    updateDraftCharCount();
+  }
+  if (fields.draftSetActiveCheckbox) fields.draftSetActiveCheckbox.checked = true;
+
+  if (fields.draftWarnings) {
+    if (draftData.warnings && draftData.warnings.length > 0) {
+      fields.draftWarnings.innerHTML = draftData.warnings.map((w) => `<div class="warning-item">⚠️ ${escapeHtml(w)}</div>`).join("");
+      fields.draftWarnings.hidden = false;
+    } else {
+      fields.draftWarnings.innerHTML = "";
+      fields.draftWarnings.hidden = true;
+    }
+  }
+
+  if (fields.draftPiiSummary) {
+    fields.draftPiiSummary.innerHTML = "";
+    const piiEntries = Object.entries(draftData.pii || {}).filter(([_, v]) => Boolean(v));
+    if (piiEntries.length > 0) {
+      for (const [k, v] of piiEntries) {
+        const item = document.createElement("div");
+        item.className = "pii-tag";
+        item.innerHTML = `<span class="pii-key">${escapeHtml(k)}:</span> <span class="pii-val">${escapeHtml(v)}</span>`;
+        fields.draftPiiSummary.appendChild(item);
+      }
+    } else {
+      fields.draftPiiSummary.innerHTML = '<span class="hint">未在正文中提取到明显的基础个人信息</span>';
+    }
+  }
+
+  if (fields.aiEnhanceStatus) {
+    fields.aiEnhanceStatus.hidden = true;
+    fields.aiEnhanceStatus.textContent = "";
+  }
+  if (fields.enhanceWithAiBtn) {
+    fields.enhanceWithAiBtn.disabled = false;
+    fields.enhanceWithAiBtn.textContent = "🤖 使用 AI 增强经历结构化";
+  }
+
+  fields.draftModal.hidden = false;
+}
+
+function closeDraftModal() {
+  if (fields.draftModal) fields.draftModal.hidden = true;
+  currentDraftData = null;
+}
+
+function updateDraftCharCount() {
+  if (!fields.draftPreviewText || !fields.draftCharCount) return;
+  const count = fields.draftPreviewText.value.length;
+  fields.draftCharCount.textContent = `${count} 字符`;
+}
+
+async function handleEnhanceWithAi() {
+  if (!currentDraftData) return;
+  const rawText = fields.draftPreviewText?.value?.trim() || "";
+  if (!rawText) {
+    showToast("经历文本为空，无法进行 AI 分析", "error");
+    return;
+  }
+
+  try {
+    fields.enhanceWithAiBtn.disabled = true;
+    fields.enhanceWithAiBtn.textContent = "🤖 正在请求 AI 结构化分析...";
+    if (fields.aiEnhanceStatus) {
+      fields.aiEnhanceStatus.hidden = false;
+      fields.aiEnhanceStatus.className = "enhance-status busy";
+      fields.aiEnhanceStatus.textContent = "正在将上方编辑后的经历文本发送给配置的 AI 接口进行语义分析与结构化...";
+    }
+
+    const aiRes = await sendRuntimeMessage({
+      type: "OJAF_PARSE_RESUME_WITH_AI",
+      payload: { rawText, previewText: rawText }
+    });
+
+    if (aiRes && aiRes.sections) {
+      mergeAiSectionsIntoProfile(currentDraftData.profileV2, aiRes.sections);
+      if (fields.aiEnhanceStatus) {
+        fields.aiEnhanceStatus.className = "enhance-status success";
+        fields.aiEnhanceStatus.textContent = "✅ AI 分析结构化完成！教育、实习、项目等经历已智能解析。保存后即可在编辑区细化。";
+      }
+      showToast("AI 增强结构化完成！");
+    } else {
+      throw new Error("AI 返回数据格式不符合预期");
+    }
+  } catch (err) {
+    if (fields.aiEnhanceStatus) {
+      fields.aiEnhanceStatus.className = "enhance-status error";
+      fields.aiEnhanceStatus.textContent = `❌ AI 增强失败：${err.message}`;
+    }
+    showToast(`AI 增强失败：${err.message}`, "error");
+  } finally {
+    fields.enhanceWithAiBtn.disabled = false;
+    fields.enhanceWithAiBtn.textContent = "🤖 使用 AI 增强经历结构化";
+  }
+}
+
+async function handleConfirmDraft() {
+  if (!currentDraftData) return;
+  const name = fields.draftProfileName?.value?.trim() || "新简历";
+  const setActive = Boolean(fields.draftSetActiveCheckbox?.checked);
+
+  try {
+    const res = await sendRuntimeMessage({
+      type: "OJAF_CREATE_PROFILE",
+      payload: {
+        operationId: generateOpId(),
+        name,
+        profileV2: currentDraftData.profileV2,
+        setActive,
+        baseStateRevision: currentEnvelope.stateRevision
+      }
+    });
+
+    closeDraftModal();
+    profileHasUnsavedChanges = false;
+
+    const envRes = await sendRuntimeMessage({ type: "OJAF_GET_ENVELOPE" });
+    currentEnvelope = envRes.envelope;
+    editingProfileId = res.profileId;
+    baseProfileRevision = 1;
+    baseStateRevision = res.stateRevision;
+
+    renderProfileSelect();
+    renderProfileSectionEditor(currentEnvelope.profiles[editingProfileId].profileV2);
+    setProfileSaved(`已保存新简历：${name}`);
+    showToast(`简历【${name}】保存成功！`);
+  } catch (err) {
+    showToast(`保存失败：${err.message}`, "error");
+    setStatus(`保存新简历失败：${err.message}`, true);
+  }
+}
+
+function openConflictModal() {
+  if (fields.conflictModal) fields.conflictModal.hidden = false;
+}
+
+function closeConflictModal() {
+  if (fields.conflictModal) fields.conflictModal.hidden = true;
+}
+
+async function handleConflictReload() {
+  closeConflictModal();
+  profileHasUnsavedChanges = false;
+  await loadSettings();
+  showToast("已重新加载最新状态，已放弃未保存修改。");
+}
+
+async function handleConflictSaveAsNew() {
+  closeConflictModal();
+  const defaultName = (currentEnvelope?.profiles?.[editingProfileId]?.name || "简历") + " (副本)";
+  const newName = window.prompt("请输入另存为的新简历名称：", defaultName);
+  if (!newName || !newName.trim()) return;
+
+  try {
+    const profileV2 = collectProfileV2FromEditor();
+    const envRes = await sendRuntimeMessage({ type: "OJAF_GET_ENVELOPE" });
+    const latestEnv = envRes.envelope;
+
+    const res = await sendRuntimeMessage({
+      type: "OJAF_CREATE_PROFILE",
+      payload: {
+        operationId: generateOpId(),
+        name: newName.trim(),
+        profileV2,
+        setActive: false,
+        baseStateRevision: latestEnv.stateRevision
+      }
+    });
+
+    profileHasUnsavedChanges = false;
+    currentEnvelope = latestEnv;
+    editingProfileId = res.profileId;
+    await loadSettings();
+    showToast("已另存为新简历！");
+  } catch (err) {
+    setStatus(`另存为新简历失败：${err.message}`, true);
+    showToast(`另存失败：${err.message}`, "error");
+  }
+}
+
 async function loadSettings() {
   try {
     const settings = await sendRuntimeMessage({ type: "OJAF_GET_SETTINGS" });
     applyApiConfig(settings.apiConfig);
     setApiSaved("API 设置已加载，当前没有未保存修改。");
+
+    const envRes = await sendRuntimeMessage({ type: "OJAF_GET_ENVELOPE" });
+    currentEnvelope = envRes.envelope;
+
+    if (envRes.isReadOnly) {
+      setStatus(`⚠️ 存储处于只读保护模式：${envRes.readOnlyReason}。请先导出备份或检查数据。`, true);
+      fields.saveProfileButton.disabled = true;
+      if (fields.createProfileBtn) fields.createProfileBtn.disabled = true;
+      if (fields.deleteProfileBtn) fields.deleteProfileBtn.disabled = true;
+      if (fields.renameProfileBtn) fields.renameProfileBtn.disabled = true;
+    }
+
+    if (!currentEnvelope || !currentEnvelope.profiles) {
+      throw new Error("未能加载简历存储结构。");
+    }
+
+    const order = Array.isArray(currentEnvelope.profileOrder) && currentEnvelope.profileOrder.length > 0
+      ? currentEnvelope.profileOrder
+      : Object.keys(currentEnvelope.profiles);
+    if (!editingProfileId || !currentEnvelope.profiles[editingProfileId]) {
+      editingProfileId = currentEnvelope.activeProfileId || order[0];
+    }
+
+    const currentProfile = currentEnvelope.profiles[editingProfileId];
+    baseProfileRevision = currentProfile.revision;
+    baseStateRevision = currentEnvelope.stateRevision;
+
     renderProfileNav();
     renderProfileTips(RESUME_SECTION_GUIDE[0]?.key);
-    renderProfileSectionEditor(getProfileV2FromSettings(settings));
+    renderProfileSelect();
+    renderProfileSectionEditor(currentProfile.profileV2);
     setProfileSaved("资料已加载，当前没有未保存修改。");
     scheduleProfileSectionSync();
     updateModeBlocks();
@@ -681,35 +1182,69 @@ async function saveProfile() {
     setProfileSaving(true);
     setProfileFeedback("正在保存资料...", "busy");
     showToast("正在保存资料...", "busy", 1600);
+
     const profileV2 = collectProfileV2FromEditor();
-    await sendRuntimeMessage({
-      type: "OJAF_SAVE_SETTINGS",
-      payload: { profileV2 }
+    const opId = generateOpId();
+
+    const res = await sendRuntimeMessage({
+      type: "OJAF_SAVE_PROFILE",
+      payload: {
+        operationId: opId,
+        profileId: editingProfileId,
+        baseProfileRevision,
+        baseStateRevision,
+        profileV2
+      }
     });
+
+    baseProfileRevision = res.profileRevision;
+    baseStateRevision = res.stateRevision;
+    if (currentEnvelope) {
+      currentEnvelope.stateRevision = res.stateRevision;
+      if (currentEnvelope.profiles?.[editingProfileId]) {
+        currentEnvelope.profiles[editingProfileId].revision = res.profileRevision;
+        currentEnvelope.profiles[editingProfileId].profileV2 = profileV2;
+      }
+    }
+
     setStatus("简历资料保存成功，已保存到本机浏览器。");
     setProfileSaved("资料已保存到本机。");
     showToast("资料已保存到本机。");
   } catch (error) {
-    setStatus(`保存资料失败：${error.message}`, true);
-    setProfileFeedback(`保存资料失败：${error.message}`, "error");
-    showToast(`保存资料失败：${error.message}`, "error");
-  }
-  finally {
+    if (error.message === PROTOCOL_ERRORS.CONFLICT || error.message.includes("CONFLICT")) {
+      setStatus("保存冲突：其他页面已修改简历状态，请选择处理方式。", true);
+      setProfileFeedback("⚠️ 保存遇到版本冲突，本地草稿已保留。", "error");
+      showToast("保存冲突，请选择处理方案", "error");
+      openConflictModal();
+    } else {
+      setStatus(`保存资料失败：${error.message}`, true);
+      setProfileFeedback(`保存资料失败：${error.message}`, "error");
+      showToast(`保存资料失败：${error.message}`, "error");
+    }
+  } finally {
     setProfileSaving(false);
   }
 }
 
 async function exportProfile() {
   try {
+    const currentProf = currentEnvelope?.profiles?.[editingProfileId];
     const profileV2 = collectProfileV2FromEditor();
-    const backup = createProfileBackup(profileV2);
+    const backup = {
+      format: PROFILE_BACKUP_FORMAT,
+      version: PROFILE_SCHEMA_VERSION,
+      exportedAt: new Date().toISOString(),
+      profileName: currentProf?.name || "我的简历",
+      profileV2
+    };
     const blob = new Blob([`${JSON.stringify(backup, null, 2)}\n`], {
       type: "application/json;charset=utf-8"
     });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = `openjobautofill-profile-${new Date().toISOString().slice(0, 10)}.json`;
+    const safeName = (currentProf?.name || "profile").replace(/[/\\?%*:|"<>]/g, "_");
+    anchor.download = `openjobautofill-${safeName}-${new Date().toISOString().slice(0, 10)}.json`;
     document.body.appendChild(anchor);
     anchor.click();
     anchor.remove();
@@ -729,14 +1264,15 @@ async function importProfileFromFile() {
   try {
     const text = await file.text();
     const profileV2 = parseImportedProfileBackup(text);
-    renderProfileSectionEditor(profileV2);
-    await sendRuntimeMessage({
-      type: "OJAF_SAVE_SETTINGS",
-      payload: { profileV2 }
+    const fileName = file.name || "导入简历";
+    const defaultName = fileName.replace(/\.[^/.]+$/, "");
+    openDraftModal({
+      name: defaultName,
+      profileV2,
+      cleanText: "(从 JSON 资料备份导入)",
+      warnings: [],
+      pii: { "姓名": profileV2?.sections?.basic?.values?.["姓名"] || "" }
     });
-    setStatus("已导入并保存到本机。资料面板会立即读取这份简历资料。");
-    setProfileSaved("资料已导入并保存到本机。");
-    showToast("资料已导入并保存到本机。");
   } catch (error) {
     setStatus(`导入失败：${error.message}`, true);
     setProfileFeedback(`导入失败：${error.message}`, "error");
@@ -754,19 +1290,21 @@ function resetProfile() {
 
   renderProfileSectionEditor(createEmptyProfileV2());
   setProfileDirty("已恢复空白模板，记得点击保存资料。");
-  setStatus("已恢复空白模板。点击保存后生效。");
+  setStatus("已恢复空白模板。点击保存资料后生效。");
 }
 
 async function clearLocalData() {
-  const confirmed = window.confirm("这会清空本机保存的简历资料和 API 设置，只影响当前浏览器。是否继续？");
+  const confirmed = window.confirm("这会清空本机保存的全部简历资料和 API 设置，只影响当前浏览器。是否继续？");
   if (!confirmed) {
     return;
   }
 
   try {
     await sendRuntimeMessage({ type: "OJAF_CLEAR_SETTINGS" });
+    editingProfileId = null;
     await loadSettings();
     setStatus("本地数据已清空，已恢复默认模板。");
+    showToast("本地数据已清空。");
   } catch (error) {
     setStatus(`清空失败：${error.message}`, true);
   }
@@ -1837,14 +2375,22 @@ function parseImportedProfileBackup(text) {
   try {
     parsed = JSON.parse(trimmed);
   } catch {
-    throw new Error("资料备份文件格式不正确，请选择从本插件导出的备份文件。");
+    throw new Error("资料备份文件不是有效的 JSON 格式。");
   }
 
-  if (!isPlainObject(parsed) || parsed.format !== PROFILE_BACKUP_FORMAT || !parsed.profileV2) {
-    throw new Error("当前只支持导入 OpenJobAutofill 导出的资料备份文件。");
+  if (!isPlainObject(parsed)) {
+    throw new Error("导入的内容必须是 JSON 对象。");
   }
 
-  return normalizeProfileV2(parsed.profileV2);
+  if (parsed.profileV2 && isPlainObject(parsed.profileV2)) {
+    return normalizeProfileV2(parsed.profileV2);
+  }
+
+  if (parsed.sections && isPlainObject(parsed.sections)) {
+    return normalizeProfileV2(parsed);
+  }
+
+  throw new Error("无法识别的简历备份格式，必须包含 profileV2 或 sections 结构。");
 }
 
 function updateModeBlocks() {

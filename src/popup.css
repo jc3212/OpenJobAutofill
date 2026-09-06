@@ -166,3 +166,38 @@ button.ghost.full {
 .error {
   color: var(--danger);
 }
+
+.profile-switch-section {
+  padding: 10px 14px;
+}
+
+.profile-switch-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.profile-switch-label {
+  flex: 0 0 auto;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.profile-select {
+  flex: 1;
+  min-width: 0;
+  height: 34px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #ffffff;
+  color: var(--ink);
+  font-size: 13px;
+  outline: none;
+  cursor: pointer;
+}
+
+.profile-select:focus {
+  border-color: var(--primary);
+}

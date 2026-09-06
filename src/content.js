@@ -2924,6 +2924,11 @@
     }
 
     currentProfileLoadPromise = (async () => {
+      const snapshot = await sendRuntimeMessage({ type: "OJAF_GET_ACTIVE_PROFILE_SNAPSHOT" }).catch(() => null);
+      if (snapshot?.profileV2) {
+        currentProfileV2 = snapshot.profileV2;
+        return currentProfileV2;
+      }
       const settings = await sendRuntimeMessage({ type: "OJAF_GET_SETTINGS" });
       currentProfileV2 = settings.profileV2 || null;
       return currentProfileV2;

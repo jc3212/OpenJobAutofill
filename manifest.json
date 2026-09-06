@@ -37,5 +37,15 @@
       "128": "icons/icon128.png"
     }
   },
-  "options_page": "src/options.html"
+  "options_page": "src/options.html",
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "src/lib/vendor/pdf.worker.min.js"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ]
 }
