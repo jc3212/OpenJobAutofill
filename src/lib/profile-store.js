@@ -31,20 +31,78 @@ export const ProfileStore = {
 
       if (envelope) {
         try {
+          let repaired = false;
           // Check for recoverable soft defects
           if (!Array.isArray(envelope.profileOrder) && envelope.profiles) {
             envelope.profileOrder = Object.keys(envelope.profiles);
+            repaired = true;
           }
           if (!envelope.profiles[envelope.activeProfileId] && envelope.profileOrder?.length > 0) {
             envelope.activeProfileId = envelope.profileOrder[0];
+            repaired = true;
+          }
+          const pKeys = Object.keys(envelope.profiles || {});
+          if (pKeys.length > 0) {
+            const orderSet = new Set(envelope.profileOrder || []);
+            if (envelope.profileOrder.length !== pKeys.length || pKeys.some((k) => !orderSet.has(k))) {
+              envelope.profileOrder = [...pKeys];
+              repaired = true;
+            }
           }
 
           assertInvariants(envelope);
+
+          if (repaired) {
+            await chrome.storage.local.set({
+              [STORAGE_ENVELOPE_KEY]: envelope,
+              [STORAGE_META_KEY]: {
+                ...meta,
+                lastRepairedAt: new Date().toISOString()
+              }
+            });
+          }
+
           isReadOnlyMode = false;
           readOnlyReason = "";
           return envelope;
         } catch (err) {
-          // Heavy corruption - enter read-only safety mode
+          // Tri-state corruption handling:
+          // Check if recoverable from legacy mirror
+          const legacyProfile = data.profileV2;
+          const hasValidLegacy = legacyProfile &&
+            typeof legacyProfile === "object" &&
+            legacyProfile.sections &&
+            typeof legacyProfile.sections === "object";
+
+          if (hasValidLegacy) {
+            try {
+              const normalizedLegacy = normalizeProfileV2 ? normalizeProfileV2(legacyProfile) : legacyProfile;
+              envelope = createDefaultResumeEnvelope(normalizedLegacy);
+              const customName = legacyProfile?.sections?.basic?.values?.["简历名称"];
+              if (customName && typeof customName === "string" && customName.trim()) {
+                envelope.profiles[envelope.activeProfileId].name = customName.trim();
+              }
+              assertInvariants(envelope);
+              meta.migrationVersion = 1;
+              meta.recoveredFromLegacy = true;
+              meta.recoveredAt = new Date().toISOString();
+
+              await chrome.storage.local.set({
+                [STORAGE_ENVELOPE_KEY]: envelope,
+                [STORAGE_META_KEY]: meta,
+                profileV2: envelope.profiles[envelope.activeProfileId].profileV2
+              });
+
+              isReadOnlyMode = false;
+              readOnlyReason = "";
+              return envelope;
+            } catch {
+              // Fall through to hard corruption
+            }
+          }
+
+          // Hard corruption: profiles is empty/corrupt and no valid legacy mirror exists.
+          // Strictly DO NOT invent a blank profile! Enter read-only safety mode and persist backup.
           isReadOnlyMode = true;
           readOnlyReason = err.message;
           const snippet = JSON.stringify(envelope || "").slice(0, 65536);
@@ -148,7 +206,15 @@ export const ProfileStore = {
         if (cached.requestHash !== requestHash) {
           return { ok: false, error: PROTOCOL_ERRORS.INVALID_OPERATION_ID_REUSE };
         }
-        return { ok: true, stateRevision: cached.stateRevision, deduplicated: true };
+        const cachedResp = cached.response || {
+          ok: true,
+          stateRevision: cached.stateRevision,
+          profileRevision: envelope.profiles?.[profileId]?.revision || 1
+        };
+        return {
+          ...JSON.parse(JSON.stringify(cachedResp)),
+          deduplicated: true
+        };
       }
 
       const targetProfile = envelope.profiles[profileId];
@@ -174,8 +240,14 @@ export const ProfileStore = {
       envelope.envelopeRevision += 1;
       envelope.lastCommittedOperationId = operationId || "";
 
+      const result = {
+        ok: true,
+        stateRevision: envelope.stateRevision,
+        profileRevision: targetProfile.revision
+      };
+
       // Trim & record idempotency
-      recordOperation(envelope, operationId, requestHash);
+      recordOperation(envelope, operationId, requestHash, result);
       assertInvariants(envelope);
 
       const toSet = {
@@ -186,11 +258,7 @@ export const ProfileStore = {
       }
 
       await chrome.storage.local.set(toSet);
-      return {
-        ok: true,
-        stateRevision: envelope.stateRevision,
-        profileRevision: targetProfile.revision
-      };
+      return result;
     });
   },
 
@@ -212,7 +280,11 @@ export const ProfileStore = {
         if (cached.requestHash !== requestHash) {
           return { ok: false, error: PROTOCOL_ERRORS.INVALID_OPERATION_ID_REUSE };
         }
-        return { ok: true, stateRevision: cached.stateRevision, deduplicated: true };
+        const cachedResp = cached.response || { ok: true, stateRevision: cached.stateRevision, activeProfileId: profileId };
+        return {
+          ...JSON.parse(JSON.stringify(cachedResp)),
+          deduplicated: true
+        };
       }
 
       if (!envelope.profiles[profileId]) {
@@ -232,7 +304,13 @@ export const ProfileStore = {
       envelope.envelopeRevision += 1;
       envelope.lastCommittedOperationId = operationId || "";
 
-      recordOperation(envelope, operationId, requestHash);
+      const result = {
+        ok: true,
+        stateRevision: envelope.stateRevision,
+        activeProfileId: profileId
+      };
+
+      recordOperation(envelope, operationId, requestHash, result);
       assertInvariants(envelope);
 
       await chrome.storage.local.set({
@@ -240,11 +318,7 @@ export const ProfileStore = {
         profileV2: envelope.profiles[profileId].profileV2
       });
 
-      return {
-        ok: true,
-        stateRevision: envelope.stateRevision,
-        activeProfileId: profileId
-      };
+      return result;
     });
   },
 
@@ -266,7 +340,11 @@ export const ProfileStore = {
         if (cached.requestHash !== requestHash) {
           return { ok: false, error: PROTOCOL_ERRORS.INVALID_OPERATION_ID_REUSE };
         }
-        return { ok: true, stateRevision: cached.stateRevision, deduplicated: true };
+        const cachedResp = cached.response || { ok: true, stateRevision: cached.stateRevision };
+        return {
+          ...JSON.parse(JSON.stringify(cachedResp)),
+          deduplicated: true
+        };
       }
 
       if (envelope.stateRevision !== baseStateRevision) {
@@ -298,7 +376,13 @@ export const ProfileStore = {
       envelope.envelopeRevision += 1;
       envelope.lastCommittedOperationId = operationId || "";
 
-      recordOperation(envelope, operationId, requestHash);
+      const result = {
+        ok: true,
+        profileId: newId,
+        stateRevision: envelope.stateRevision
+      };
+
+      recordOperation(envelope, operationId, requestHash, result);
       assertInvariants(envelope);
 
       const toSet = { [STORAGE_ENVELOPE_KEY]: envelope };
@@ -307,11 +391,7 @@ export const ProfileStore = {
       }
 
       await chrome.storage.local.set(toSet);
-      return {
-        ok: true,
-        profileId: newId,
-        stateRevision: envelope.stateRevision
-      };
+      return result;
     });
   },
 
@@ -333,7 +413,11 @@ export const ProfileStore = {
         if (cached.requestHash !== requestHash) {
           return { ok: false, error: PROTOCOL_ERRORS.INVALID_OPERATION_ID_REUSE };
         }
-        return { ok: true, stateRevision: cached.stateRevision, deduplicated: true };
+        const cachedResp = cached.response || { ok: true, stateRevision: cached.stateRevision, activeProfileId: envelope.activeProfileId };
+        return {
+          ...JSON.parse(JSON.stringify(cachedResp)),
+          deduplicated: true
+        };
       }
 
       if (!envelope.profiles[profileId]) {
@@ -366,7 +450,13 @@ export const ProfileStore = {
       envelope.envelopeRevision += 1;
       envelope.lastCommittedOperationId = operationId || "";
 
-      recordOperation(envelope, operationId, requestHash);
+      const result = {
+        ok: true,
+        stateRevision: envelope.stateRevision,
+        activeProfileId: envelope.activeProfileId
+      };
+
+      recordOperation(envelope, operationId, requestHash, result);
       assertInvariants(envelope);
 
       await chrome.storage.local.set({
@@ -374,11 +464,7 @@ export const ProfileStore = {
         profileV2: envelope.profiles[envelope.activeProfileId].profileV2
       });
 
-      return {
-        ok: true,
-        stateRevision: envelope.stateRevision,
-        activeProfileId: envelope.activeProfileId
-      };
+      return result;
     });
   },
 
@@ -400,7 +486,11 @@ export const ProfileStore = {
         if (cached.requestHash !== requestHash) {
           return { ok: false, error: PROTOCOL_ERRORS.INVALID_OPERATION_ID_REUSE };
         }
-        return { ok: true, stateRevision: cached.stateRevision, deduplicated: true };
+        const cachedResp = cached.response || { ok: true, stateRevision: cached.stateRevision, profileId, newName: envelope.profiles?.[profileId]?.name };
+        return {
+          ...JSON.parse(JSON.stringify(cachedResp)),
+          deduplicated: true
+        };
       }
 
       const profile = envelope.profiles[profileId];
@@ -420,24 +510,26 @@ export const ProfileStore = {
       envelope.envelopeRevision += 1;
       envelope.lastCommittedOperationId = operationId || "";
 
-      recordOperation(envelope, operationId, requestHash);
+      const result = {
+        ok: true,
+        stateRevision: envelope.stateRevision,
+        profileId,
+        newName: profile.name
+      };
+
+      recordOperation(envelope, operationId, requestHash, result);
       assertInvariants(envelope);
 
       await chrome.storage.local.set({
         [STORAGE_ENVELOPE_KEY]: envelope
       });
 
-      return {
-        ok: true,
-        stateRevision: envelope.stateRevision,
-        profileId,
-        newName: profile.name
-      };
+      return result;
     });
   }
 };
 
-function recordOperation(envelope, operationId, requestHash) {
+function recordOperation(envelope, operationId, requestHash, response = {}) {
   if (!operationId) return;
   if (!envelope.recentOperations) {
     envelope.recentOperations = {};
@@ -446,6 +538,7 @@ function recordOperation(envelope, operationId, requestHash) {
     requestHash,
     result: "COMMITTED",
     stateRevision: envelope.stateRevision,
+    response: (typeof structuredClone === "function") ? structuredClone(response) : JSON.parse(JSON.stringify(response)),
     timestamp: Date.now()
   };
 
@@ -458,4 +551,24 @@ function recordOperation(envelope, operationId, requestHash) {
       delete envelope.recentOperations[key];
     }
   }
+}
+
+/**
+ * Unwraps a store operation result or throws a detailed error on failure.
+ * Guarantees store failures are never misinterpreted as transport successes.
+ * 
+ * @param {object} res Store operation response
+ * @returns {object} Unwrapped success response
+ */
+export function unwrapStoreResult(res) {
+  if (!res || typeof res !== "object") {
+    throw new Error("Store error: Empty or invalid response");
+  }
+  if (!res.ok) {
+    const err = new Error(res.error || "Store operation failed");
+    err.code = res.error;
+    err.details = res;
+    throw err;
+  }
+  return res;
 }

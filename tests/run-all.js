@@ -14,6 +14,7 @@ async function runAll() {
     await import("./unit/pii-redactor.test.js");
     await import("./integration/resume-import-service.test.js");
     await import("./integration/ai-privacy-gate.test.js");
+    await import("./unit/profile-store.test.js");
     await import("./test-phase0-security.js");
     await import("./test-phase1-invariants-concurrency.js");
     await import("./test-phase2-parsers-pii-ssrf.js");
