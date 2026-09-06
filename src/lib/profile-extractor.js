@@ -2,6 +2,8 @@
  * OpenJobAutofill - Full Automated Local Resume Profile Extractor and PII Isolator
  */
 
+import { redactPii } from "./pii-redactor.js";
+
 export function extractLocalProfileAndPii(rawText) {
   const text = String(rawText || "").trim();
   const rawLines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
@@ -89,14 +91,12 @@ export function extractLocalProfileAndPii(rawText) {
   const salaryMatch = text.match(/(?:期望薪资|期望月薪|薪资要求)[:：\s]*([^\n\r,，。]+)/);
   if (salaryMatch) intentionSalary = salaryMatch[1].trim();
 
-  // Prepare isolated experience text by redacting phone and email
-  let experienceText = text;
-  if (pii["电话"]) {
-    experienceText = experienceText.replace(new RegExp(pii["电话"], "g"), "[已脱敏手机号]");
-  }
-  if (pii["邮箱"]) {
-    experienceText = experienceText.replace(new RegExp(pii["邮箱"], "g"), "[已脱敏邮箱]");
-  }
+  // Prepare isolated experience text by redacting phone and email safely with literal replacement
+  const { redactedText } = redactPii(text, {
+    "电话": pii["电话"],
+    "邮箱": pii["邮箱"]
+  });
+  const experienceText = redactedText;
 
   // Construct initial local ProfileV2 structure
   const now = new Date().toISOString();
