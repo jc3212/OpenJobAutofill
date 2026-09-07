@@ -45,7 +45,7 @@ const UPDATE_REPOSITORY = UPSTREAM_REPOSITORY;
 const UPDATE_LATEST_RELEASE_API = getUpdateApiUrl(UPDATE_REPOSITORY);
 const UPDATE_RELEASES_URL = getReleasesUrl(UPDATE_REPOSITORY);
 
-chrome.runtime.onInstalled.addListener(async () => {
+chrome.runtime?.onInstalled?.addListener(async () => {
   await ProfileStore.ensureInitialized(normalizeProfileV2).catch(() => undefined);
   const existing = await chrome.storage.local.get([
     STORAGE_KEYS.apiConfig,
@@ -432,21 +432,27 @@ async function mapFields(payload) {
     throw new Error("Missing profile field catalog.");
   }
 
-  const compactScan = {
-    url: scan.url,
-    hostname: scan.hostname,
-    title: scan.title,
-    fields: scan.fields.map(compactField)
-  };
+  const taskDeadline = Number(payload.taskDeadline || 0) || (Date.now() + 25000);
+  const { outboundScan, opaqueToRealId } = createOutboundAiDto(scan);
 
-  const messages = buildMessages(profileCatalog, compactScan);
+  const messages = buildMessages(profileCatalog, outboundScan);
   const rawContent = await callAi(apiConfig, messages, {
     profile: profileCatalog,
     profileCatalog,
-    scan: compactScan
+    scan: outboundScan,
+    taskDeadline
   });
   const parsed = parseJsonFromText(rawContent);
-  const mappings = annotateMappingsWithCatalog(normalizeAiMappings(parsed, compactScan.fields), profileCatalog);
+
+  if (parsed && Array.isArray(parsed.mappings)) {
+    for (const m of parsed.mappings) {
+      if (m && m.fieldId) {
+        m.fieldId = opaqueToRealId.get(m.fieldId) || m.fieldId;
+      }
+    }
+  }
+
+  const mappings = annotateMappingsWithCatalog(normalizeAiMappings(parsed, scan.fields), profileCatalog);
   return {
     mappings,
     notes: Array.isArray(parsed?.notes) ? parsed.notes : [],
@@ -462,22 +468,27 @@ async function analyzePageStructure(payload) {
 
   const settings = await getSettings();
   const apiConfig = { ...settings.apiConfig, ...(payload.apiConfig || {}) };
-  const compactScan = {
-    url: scan.url,
-    hostname: scan.hostname,
-    title: scan.title,
-    siteAdapter: scan.siteAdapter || null,
-    fields: scan.fields.map(compactField)
-  };
+  const taskDeadline = Number(payload.taskDeadline || 0) || (Date.now() + 25000);
+  const { outboundScan, opaqueToRealId } = createOutboundAiDto(scan);
 
-  const messages = buildPageStructureMessages(compactScan);
+  const messages = buildPageStructureMessages(outboundScan);
   const rawContent = await callAi(apiConfig, messages, {
     profile: { fields: [] },
     profileCatalog: { fields: [] },
-    scan: compactScan
+    scan: outboundScan,
+    taskDeadline
   });
   const parsed = parseJsonFromText(rawContent);
-  return normalizePageStructureAnalysis(parsed, compactScan.fields);
+
+  if (parsed && Array.isArray(parsed.fieldHints)) {
+    for (const h of parsed.fieldHints) {
+      if (h && h.fieldId) {
+        h.fieldId = opaqueToRealId.get(h.fieldId) || h.fieldId;
+      }
+    }
+  }
+
+  return normalizePageStructureAnalysis(parsed, scan.fields);
 }
 
 async function testApi(payload) {
@@ -506,9 +517,7 @@ async function testApi(payload) {
     ]
   };
   const fakeScan = {
-    url: "https://example.test/job",
     hostname: "example.test",
-    title: "Test Form",
     fields: [
       {
         fieldId: "test_name",
@@ -517,16 +526,16 @@ async function testApi(payload) {
         placeholder: "",
         required: true,
         section: "基本信息",
-        nearbyText: "基本信息 姓名",
         options: []
       }
     ]
   };
-  const messages = buildMessages(fakeProfile, fakeScan);
+  const { outboundScan } = createOutboundAiDto(fakeScan);
+  const messages = buildMessages(fakeProfile, outboundScan);
   const rawContent = await callAi(apiConfig, messages, {
     profile: fakeProfile,
     profileCatalog: fakeProfile,
-    scan: fakeScan
+    scan: outboundScan
   });
   const parsed = parseJsonFromText(rawContent);
   return {
@@ -569,34 +578,51 @@ async function listModels(payload) {
   };
 }
 
-function compactField(field) {
-  return {
-    fieldId: field.fieldId,
-    type: field.type,
-    label: sanitizePromptText(field.label, 220),
-    placeholder: sanitizePromptText(field.placeholder, 160),
-    name: sanitizeAttributeText(field.name),
-    id: sanitizeAttributeText(field.id),
-    required: field.required,
-    disabled: field.disabled,
-    readOnly: field.readOnly,
-    canFill: field.canFill,
-    section: sanitizePromptText(field.section, 220),
-    nearbyText: sanitizePromptText(field.nearbyText, 420),
-    groupText: sanitizePromptText(field.groupText, 360),
-    cssPath: sanitizeAttributeText(field.cssPath),
-    siteAdapterId: sanitizeAttributeText(field.siteAdapterId),
-    siteAdapterName: sanitizePromptText(field.siteAdapterName, 120),
-    hasCurrentValue: Boolean(field.hasCurrentValue),
-    options: Array.isArray(field.options) ? field.options.slice(0, 50).map(compactOption) : []
-  };
-}
+export function createOutboundAiDto(scan) {
+  const opaqueToRealId = new Map();
+  const realToOpaqueId = new Map();
+  let counter = 1;
 
-function compactOption(option) {
-  return {
-    value: sanitizePromptText(option?.value, 120),
-    label: sanitizePromptText(option?.label, 120)
+  let hostname = scan.hostname || "";
+  if (!hostname && scan.url) {
+    try {
+      hostname = new URL(scan.url).hostname;
+    } catch {
+      hostname = "";
+    }
+  }
+
+  const outboundFields = (scan.fields || []).map((field) => {
+    const opaqueId = `fld_${counter++}`;
+    opaqueToRealId.set(opaqueId, field.fieldId);
+    realToOpaqueId.set(field.fieldId, opaqueId);
+
+    const cleanOptions = Array.isArray(field.options)
+      ? field.options
+          .map((opt) => {
+            const lbl = String(opt?.label || opt?.text || opt?.value || "").trim();
+            return lbl ? { label: sanitizePromptText(lbl, 30) } : null;
+          })
+          .filter(Boolean)
+          .slice(0, 20)
+      : [];
+
+    return {
+      fieldId: opaqueId,
+      type: String(field.type || "text").slice(0, 20),
+      label: sanitizePromptText(field.label || field.placeholder || "", 60),
+      section: sanitizePromptText(field.section || "", 40),
+      required: Boolean(field.required),
+      options: cleanOptions
+    };
+  });
+
+  const outboundScan = {
+    hostname,
+    fields: outboundFields
   };
+
+  return { outboundScan, opaqueToRealId, realToOpaqueId };
 }
 
 function normalizeProvidedProfileCatalog(profileCatalog) {
@@ -796,10 +822,10 @@ async function callAi(apiConfig, messages, context) {
   if (apiConfig.mode === "custom") {
     return callCustomApi(apiConfig, messages, context);
   }
-  return callOpenAiCompatible(apiConfig, messages);
+  return callOpenAiCompatible(apiConfig, messages, context);
 }
 
-async function callOpenAiCompatible(apiConfig, messages) {
+async function callOpenAiCompatible(apiConfig, messages, context) {
   if (!apiConfig.baseUrl) {
     throw new Error("API base URL is required.");
   }
@@ -820,11 +846,37 @@ async function callOpenAiCompatible(apiConfig, messages) {
     body.response_format = { type: "json_object" };
   }
 
-  const response = await fetch(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body)
-  });
+  const taskDeadline = Number(context?.taskDeadline || 0) || (Date.now() + 25000);
+  const remainingBudget = Math.max(0, taskDeadline - Date.now());
+  if (remainingBudget <= 0) {
+    throw new Error("AI_REQUEST_TIMEOUT: 任务 AI 总预算（25秒）已耗尽，已自动降级使用本地规则。");
+  }
+
+  const timeoutMs = Math.min(15000, remainingBudget);
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    controller.abort(new Error("AI_REQUEST_TIMEOUT"));
+  }, timeoutMs);
+
+  let response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      signal: controller.signal
+    });
+  } catch (err) {
+    if (err?.name === "AbortError" || err?.message?.includes("AI_REQUEST_TIMEOUT")) {
+      const isTotalExceeded = Date.now() >= taskDeadline;
+      throw new Error(isTotalExceeded
+        ? "AI_REQUEST_TIMEOUT: 任务 AI 总预算（25秒）已耗尽，已自动降级使用本地规则。"
+        : "AI_REQUEST_TIMEOUT: AI 请求超时（15秒内无响应），已自动降级使用本地规则。");
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
 
   const text = await response.text();
   if (!response.ok) {
@@ -863,11 +915,37 @@ async function callCustomApi(apiConfig, messages, context) {
     scan: context.scan
   });
 
-  const response = await fetch(apiConfig.customUrl, {
-    method: apiConfig.customMethod || "POST",
-    headers,
-    body
-  });
+  const taskDeadline = Number(context?.taskDeadline || 0) || (Date.now() + 25000);
+  const remainingBudget = Math.max(0, taskDeadline - Date.now());
+  if (remainingBudget <= 0) {
+    throw new Error("AI_REQUEST_TIMEOUT: 任务 AI 总预算（25秒）已耗尽，已自动降级使用本地规则。");
+  }
+
+  const timeoutMs = Math.min(15000, remainingBudget);
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    controller.abort(new Error("AI_REQUEST_TIMEOUT"));
+  }, timeoutMs);
+
+  let response;
+  try {
+    response = await fetch(apiConfig.customUrl, {
+      method: apiConfig.customMethod || "POST",
+      headers,
+      body,
+      signal: controller.signal
+    });
+  } catch (err) {
+    if (err?.name === "AbortError" || err?.message?.includes("AI_REQUEST_TIMEOUT")) {
+      const isTotalExceeded = Date.now() >= taskDeadline;
+      throw new Error(isTotalExceeded
+        ? "AI_REQUEST_TIMEOUT: 任务 AI 总预算（25秒）已耗尽，已自动降级使用本地规则。"
+        : "AI_REQUEST_TIMEOUT: AI 自定义接口请求超时（15秒内无响应），已自动降级使用本地规则。");
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
 
   const text = await response.text();
   if (!response.ok) {
@@ -1429,3 +1507,13 @@ async function parseResumeWithAi(payload) {
     }
   };
 }
+
+export {
+  mapFields,
+  analyzePageStructure,
+  callAi,
+  callOpenAiCompatible,
+  callCustomApi,
+  handleMessage
+};
+

@@ -17,10 +17,10 @@ If this project saves you time, a GitHub Star would be appreciated. Issues and f
 - One-click scanning for the current job application page: determined fields are filled, and the rest are marked as pending.
 - Resume data stays on your device and does not need to be uploaded to a cloud service.
 - Supports common inputs, textareas, radio buttons, checkboxes, dropdowns, and date-like fields.
-- A profile panel lets you browse, search, and manually copy saved profile data for orange pending fields.
+- Real-time execution status and diagnostics widget on page; resume data is strictly isolated inside extension pages to prevent web scripts from scraping personal PII.
 - Optional OpenAI-compatible API or custom API support for better page-field understanding.
-- AI only helps identify page fields and matching profile-field names, not your actual resume values.
-- Autofill results use two color marks: green for filled fields and orange for fields that still need attention.
+- AI receives strictly desensitized minimal metadata with session-scoped opaque field IDs (`fld_1`, `fld_2`); never transmits actual resume values.
+- Autofill results use two color marks: green for verified filled fields and orange for fields that still need review.
 - GitHub Release update checks are supported; the extension icon shows `NEW` when a newer release is available.
 
 ## Installation
@@ -39,13 +39,13 @@ No dependency installation or build step is required. Load the project folder di
 ## First Use
 
 1. Click the OpenJobAutofill icon in the browser toolbar.
-2. Click `Settings`.
+2. Click `Settings` (opens in a full browser tab for comfortable profile editing).
 3. Fill in your resume profile by section.
 4. Click `Save Profile`; the data is saved to local browser extension storage.
 5. Open a resume or application form page on a recruiting website.
 6. Click the extension icon, then click `Start Filling`.
 7. Wait for scanning and filling to complete, then review the green/orange marks on the page.
-8. For orange pending fields, open the profile panel, search the value, and copy it manually.
+8. For orange pending fields, click "Settings" on the bottom of the status panel to review and copy values in the isolated extension page.
 9. Review the final form yourself and submit it manually.
 
 The repository includes `sample-profile.json` if you want to test the extension before entering your own data.
@@ -66,20 +66,19 @@ Before updating, export a profile backup from the settings page. Do not uninstal
 
 ## Color Marks
 
-- Green: filled.
+- Green: filled and verified via readback.
 - Orange: pending manual handling or review.
 
 If the page refreshes, moves to another step, or dynamically loads new fields, click `Start Filling` again.
 
-## Privacy
+## Privacy & Security Architecture
 
-- Resume data is stored locally in your browser.
-- API keys are stored only in local extension storage.
-- Page scripts are injected only after you click the extension and interact with the current page.
-- The extension never clicks the final submit button automatically.
-- The extension never sends your actual resume values to AI.
-- Update checks only access this project's GitHub Releases and do not upload resume data.
-- Always review the page after autofill, especially IDs, contact information, dates, choice fields, and declaration fields.
+- **Strict Local Profile Isolation**: Resume profiles are stored locally in extension storage. The options manager runs in a dedicated browser tab (`open_in_tab: true`).
+- **Zero DOM Leakage**: The on-page widget only displays progress and status; it never renders applicant names, phone numbers, or work history in host DOM, preventing malicious webpage scripts from harvesting candidate data.
+- **Minimal Metadata AI DTO**: AI requests transmit only the top-level hostname (e.g. `zhaopin.com`), sanitized field labels/types, and session-scoped opaque identifiers (`fld_1`, `fld_2`). **Full URLs (including tokens and query parameters), page titles, nearby DOM text, CSS paths, DOM IDs/names, and entered values are strictly prohibited from outbound transmission.**
+- **Physical Shielding for Sensitive Controls**: Password fields (`type="password"`) and file upload fields (`type="file"`) are completely ignored by scanner and filler logic.
+- **API Credential Protection**: API keys stay in local browser storage and are strictly stripped from exported profile backups.
+- **Human In the Loop**: The extension never submits forms automatically. Always review filled data before submitting.
 
 ## FAQ
 

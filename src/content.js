@@ -68,7 +68,7 @@
   }
 
   const CONTROL_SELECTOR = [
-    'input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="reset"]):not([type="image"])',
+    'input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="reset"]):not([type="image"]):not([type="password"]):not([type="file"])',
     "textarea",
     "select",
     '[contenteditable="true"]',
@@ -77,6 +77,30 @@
     '[role="radio"]',
     '[role="checkbox"]'
   ].join(",");
+
+  function isWritableTarget(element) {
+    if (!element || !(element instanceof Element)) {
+      return false;
+    }
+
+    const tagName = String(element.tagName || "").toUpperCase();
+    if (element instanceof HTMLInputElement || tagName === "INPUT") {
+      const type = (element.getAttribute?.("type") || element.type || "text").toLowerCase();
+      if (["password", "file", "hidden", "submit", "button", "reset", "image"].includes(type)) {
+        return false;
+      }
+    }
+
+    if (element.disabled || element.getAttribute?.("aria-disabled") === "true" || element.hasAttribute?.("disabled")) {
+      return false;
+    }
+
+    if (element.readOnly || element.getAttribute?.("aria-readonly") === "true" || element.getAttribute?.("readonly") != null) {
+      return false;
+    }
+
+    return true;
+  }
 
   const SITE_ADAPTERS = [
     {
@@ -483,15 +507,25 @@
       return false;
     }
 
-    const style = window.getComputedStyle(element);
-    if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") {
-      return false;
-    }
+    try {
+      if (typeof window.getComputedStyle === "function") {
+        const style = window.getComputedStyle(element);
+        if (style && (style.display === "none" || style.visibility === "hidden" || style.opacity === "0")) {
+          return false;
+        }
+      } else if (element.style) {
+        if (element.style.display === "none" || element.style.visibility === "hidden" || element.style.opacity === "0") {
+          return false;
+        }
+      }
 
-    const rect = element.getBoundingClientRect();
-    if (rect.width === 0 && rect.height === 0) {
-      return false;
-    }
+      if (typeof element.getBoundingClientRect === "function") {
+        const rect = element.getBoundingClientRect();
+        if (rect && rect.width === 0 && rect.height === 0) {
+          return false;
+        }
+      }
+    } catch {}
 
     return true;
   }
@@ -1023,18 +1057,43 @@
         return;
       }
 
-      chrome.runtime.sendMessage(message, (response) => {
-        const error = chrome.runtime.lastError;
-        if (error) {
-          reject(new Error(error.message));
-          return;
+      let settled = false;
+      try {
+        const p = chrome.runtime.sendMessage(message, (response) => {
+          if (settled) return;
+          settled = true;
+          const error = chrome.runtime.lastError;
+          if (error) {
+            reject(new Error(error.message));
+            return;
+          }
+          if (!response?.ok) {
+            reject(new Error(response?.error || "Runtime message failed."));
+            return;
+          }
+          resolve(response.data);
+        });
+        if (p && typeof p.then === "function") {
+          p.then((res) => {
+            if (settled) return;
+            settled = true;
+            if (res && res.ok === false) {
+              reject(new Error(res.error || "Runtime message failed."));
+            } else {
+              resolve(res?.data);
+            }
+          }).catch((err) => {
+            if (settled) return;
+            settled = true;
+            reject(err);
+          });
         }
-        if (!response?.ok) {
-          reject(new Error(response?.error || "Runtime message failed."));
-          return;
+      } catch (err) {
+        if (!settled) {
+          settled = true;
+          reject(err);
         }
-        resolve(response.data);
-      });
+      }
     });
   }
 
@@ -2059,7 +2118,7 @@
   function buildFieldMeta(element) {
     const adapter = getActiveSiteAdapter();
     const type = getControlType(element);
-    const canFill = !element.disabled && type !== "file";
+    const canFill = isWritableTarget(element);
     const rawLabel = normalizeText(
       getLabelByFor(element) ||
         getDataAttributeLabelText(element) ||
@@ -2094,8 +2153,8 @@
       name: normalizeText(element.getAttribute("name")),
       id: normalizeText(element.getAttribute("id")),
       required: Boolean(element.required || element.getAttribute("aria-required") === "true"),
-      disabled: Boolean(element.disabled),
-      readOnly: Boolean(element.readOnly || element.getAttribute("aria-readonly") === "true"),
+      disabled: Boolean(element.disabled || element.getAttribute("aria-disabled") === "true"),
+      readOnly: Boolean(element.readOnly || element.getAttribute("aria-readonly") === "true" || element.getAttribute("readonly") != null),
       hasCurrentValue: hasMeaningfulControlValue(element, label, currentValue),
       currentValue,
       canFill,
@@ -2111,22 +2170,32 @@
     const parts = [];
     let current = element;
 
-    while (current && current.nodeType === Node.ELEMENT_NODE && parts.length < 5) {
+    while (current && current.nodeType === Node.ELEMENT_NODE && parts.length < 6) {
       let selector = current.nodeName.toLowerCase();
       if (current.id) {
-        selector += `#${current.id}`;
+        selector += `#${CSS.escape ? CSS.escape(current.id) : current.id}`;
         parts.unshift(selector);
         break;
       }
 
+      let index = 1;
+      let sibling = current.previousElementSibling;
+      while (sibling) {
+        if (sibling.nodeName === current.nodeName) {
+          index++;
+        }
+        sibling = sibling.previousElementSibling;
+      }
+
       const className = String(current.className || "")
         .split(/\s+/)
-        .filter(Boolean)
+        .filter((c) => c && /^[a-zA-Z0-9_-]+$/.test(c) && !c.startsWith("ojaf-") && !c.includes("focus") && !c.includes("active"))
         .slice(0, 2)
         .join(".");
       if (className) {
         selector += `.${className}`;
       }
+      selector += `:nth-of-type(${index})`;
 
       parts.unshift(selector);
       current = current.parentElement;
@@ -2899,7 +2968,7 @@
 
   function ensureProfilePanel() {
     injectStyle();
-    if (profilePanel && document.contains(profilePanel)) {
+    if (profilePanel && (typeof document.contains === "function" ? document.contains(profilePanel) : Boolean(profilePanel.parentElement))) {
       return profilePanel;
     }
 
@@ -2923,7 +2992,7 @@
     const subtitle = document.createElement("div");
     subtitle.className = "arf-subtitle";
     subtitle.dataset.role = "subtitle";
-    subtitle.textContent = "已保存的简历资料。用于查看、搜索和复制；开始填写会扫描并自动填写当前网页。";
+    subtitle.textContent = "执行状态与填表进度。个人简历数据严格隔离在插件页面中保护隐私。";
     titleWrap.append(title, subtitle);
 
     const headerActions = document.createElement("div");
@@ -2936,40 +3005,21 @@
     collapseBtn.textContent = "收起";
     collapseBtn.addEventListener("click", toggleProfilePanelCollapsed);
 
-    const homeBtn = document.createElement("button");
-    homeBtn.type = "button";
-    homeBtn.className = "arf-home";
-    homeBtn.dataset.action = "home";
-    homeBtn.textContent = "主页";
-    homeBtn.addEventListener("click", goProfilePanelHome);
-
     const closeBtn = document.createElement("button");
     closeBtn.type = "button";
     closeBtn.className = "arf-close";
     closeBtn.textContent = "×";
     closeBtn.addEventListener("click", () => setProfilePanelVisible(false));
-    headerActions.append(collapseBtn, homeBtn, closeBtn);
+    headerActions.append(collapseBtn, closeBtn);
     header.append(titleWrap, headerActions);
 
     const body = document.createElement("div");
     body.className = "arf-body";
 
-    const searchInput = document.createElement("input");
-    searchInput.className = "arf-search";
-    searchInput.dataset.role = "quick-copy-search";
-    searchInput.type = "search";
-    searchInput.placeholder = "搜索分类或内容，例如 手机 / 项目 / 奖学金";
-    searchInput.addEventListener("input", () => {
-      sidebarFilter = normalizeText(searchInput.value || "", 80);
-      activeProfileCategory = "";
-      renderQuickCopyList(panel);
-      queueProfilePanelStateSave();
-    });
-
     const content = document.createElement("div");
     content.className = "arf-content";
     content.dataset.role = "quick-copy-list";
-    content.textContent = "资料加载中...";
+    content.textContent = "简历数据安全隔离：资料仅在插件设置页中查看与编辑，当前页面不暴露任何私密文本。";
 
     const status = document.createElement("div");
     status.className = "arf-meta";
@@ -2993,15 +3043,6 @@
     const actions = document.createElement("div");
     actions.className = "arf-actions";
 
-    const copyCategoryBtn = document.createElement("button");
-    copyCategoryBtn.type = "button";
-    copyCategoryBtn.dataset.action = "copy-category";
-    copyCategoryBtn.textContent = "复制本类";
-    copyCategoryBtn.disabled = true;
-    copyCategoryBtn.addEventListener("click", () => {
-      void copyActiveCategory();
-    });
-
     const refreshBtn = document.createElement("button");
     refreshBtn.type = "button";
     refreshBtn.className = "secondary";
@@ -3020,14 +3061,14 @@
       void openOptionsPageFromProfilePanel();
     });
 
-    actions.append(copyCategoryBtn, refreshBtn, settingsBtn);
+    actions.append(refreshBtn, settingsBtn);
 
     const footer = document.createElement("div");
     footer.className = "arf-footer";
 
     footer.append(status, progress, actions);
 
-    body.append(searchInput, content);
+    body.append(content);
     panel.append(header, body, footer);
     document.documentElement.appendChild(panel);
     profilePanel = panel;
@@ -4524,7 +4565,12 @@
   }
 
   function resolveEntryValueForField(field, entry, fieldLabel, fieldCategory) {
-    const rawValue = entry?.value == null ? "" : String(entry.value).trim();
+    let rawValue = "";
+    if (typeof entry === "string") {
+      rawValue = entry.trim();
+    } else if (entry && typeof entry === "object") {
+      rawValue = entry.value == null ? "" : String(entry.value).trim();
+    }
     if (!rawValue) {
       return "";
     }
@@ -5073,15 +5119,18 @@
     const fieldLabel = field?.inferredLabel || inferFieldLabel(field);
     const fieldCategory = field?.inferredCategory || inferMatchSection(field);
     const value = resolveEntryValueForField(field, entry, fieldLabel, fieldCategory);
-    const confidence = score >= 40 ? Math.max(0, Math.min(0.99, 0.45 + score / 100)) : Math.max(0, score / 120);
+    const normalizedScore = (score > 0 && score <= 1) ? score * 100 : score;
+    const confidence = normalizedScore >= 40 ? Math.max(0, Math.min(0.99, 0.45 + normalizedScore / 100)) : Math.max(0, normalizedScore / 120);
     const text = compactText([fieldLabel, fieldCategory, field.nearbyText, field.placeholder, field.name, field.id].join(" "));
     const writeMode = guessAutofillValueFieldType(field);
     const autoFillScoreThreshold = getAutoFillScoreThreshold(field, fieldLabel, fieldCategory);
-    const alreadyMatches = valuesLookEquivalent(field.currentValue, value);
+    const alreadyMatches = typedValuesLookEquivalent(field.currentValue, value, writeMode, field);
+    const hasValue = Boolean(field.hasCurrentValue || (field.currentValue && String(field.currentValue).trim() !== ""));
+    // Product default: only auto-fill empty fields! Differing non-empty fields require confirmation.
     const shouldAutoFill =
-      (alreadyMatches || score >= autoFillScoreThreshold) &&
+      (alreadyMatches || (!hasValue && normalizedScore >= autoFillScoreThreshold)) &&
       value !== "" &&
-      field.canFill &&
+      field.canFill !== false &&
       !/上传|附件|照片|证件照|简历附件/.test(text);
 
     return {
@@ -5090,6 +5139,10 @@
       field,
       fieldLabel,
       fieldCategory,
+      snapshotValue: String(field.currentValue || "").trim(),
+      snapshotType: field.type || "text",
+      snapshotLabel: fieldLabel,
+      snapshotSection: fieldCategory,
       sourceLabel: entry?.label || "",
       sourceCategory: entry?.category || "",
       sourceSubsection: entry?.subsection || "",
@@ -5101,10 +5154,10 @@
       mappingSource: "本地规则",
       reason: "",
       shouldAutoFill,
-      canAutoFill: Boolean(value) && field.canFill && (alreadyMatches || score >= 32),
+      canAutoFill: Boolean(value) && field.canFill !== false && (alreadyMatches || normalizedScore >= 32),
       alreadyMatches,
-      warning: buildCandidateWarning(field, entry, score, writeMode),
-      score
+      warning: buildCandidateWarning(field, entry, normalizedScore, writeMode),
+      score: normalizedScore
     };
   }
 
@@ -5133,11 +5186,12 @@
     if (!candidate.value) {
       return null;
     }
+    const hasValue = Boolean(field.hasCurrentValue || (field.currentValue && String(field.currentValue).trim() !== ""));
     candidate.confidence = confidence;
     candidate.score = score;
     candidate.mappingSource = "AI 优先匹配";
     candidate.reason = normalizeText(mapping.reason || "", 160);
-    candidate.shouldAutoFill = (candidate.alreadyMatches || confidence >= (field.hasCurrentValue ? 0.86 : 0.68)) && Boolean(candidate.value) && field.canFill;
+    candidate.shouldAutoFill = (candidate.alreadyMatches || (!hasValue && confidence >= 0.68)) && Boolean(candidate.value) && field.canFill;
     candidate.canAutoFill = (candidate.alreadyMatches || confidence >= 0.42) && Boolean(candidate.value) && field.canFill;
     candidate.warning = buildAiCandidateWarning(candidate, mapping);
     return candidate;
@@ -5201,31 +5255,145 @@
     return normalizeText(String(value), maxLength);
   }
 
-  function normalizeComparableValue(value) {
-    const text = normalizeText(value, 120);
-    if (!text) {
-      return "";
+  const CONTROLLED_SYNONYM_GROUPS = [
+    ["博士", "博士研究生", "博士生", "doctor", "phd"],
+    ["硕士", "硕士研究生", "硕士生", "研究生", "master"],
+    ["本科", "大学本科", "学士", "bachelor"],
+    ["大专", "专科", "大学专科", "高职"],
+    ["高中", "高中及以下", "中专", "中职"],
+    ["男", "男性", "male", "m"],
+    ["女", "女性", "female", "f"],
+    ["是", "yes", "true", "1", "checked", "on", "有", "同意", "接受", "支持"],
+    ["否", "no", "false", "0", "off", "无", "不同意", "拒绝", "反对"],
+    ["未婚", "单身"],
+    ["已婚"],
+    ["离异", "离婚"],
+    ["丧偶"],
+    ["中共党员", "党员"],
+    ["共青团员", "团员"],
+    ["群众", "普通公民"],
+    ["校级", "学校级"],
+    ["院级", "学院级"]
+  ];
+
+  const SYNONYM_CANONICAL_MAP = new Map();
+  for (const group of CONTROLLED_SYNONYM_GROUPS) {
+    const canonical = group[0];
+    for (const item of group) {
+      SYNONYM_CANONICAL_MAP.set(String(item).trim().toLowerCase(), canonical);
+    }
+  }
+
+  function getCanonicalSynonym(val) {
+    if (val == null) return "";
+    const clean = String(val).trim().toLowerCase();
+    return SYNONYM_CANONICAL_MAP.get(clean) || clean;
+  }
+
+  function normalizePhoneDigits(phoneStr) {
+    if (!phoneStr) return "";
+    let cleaned = String(phoneStr).trim().replace(/[\s\-().（）]/g, "");
+    if (cleaned.startsWith("+86") || cleaned.startsWith("0086")) {
+      cleaned = cleaned.replace(/^(?:\+86|0086)/, "");
+    } else if (cleaned.length === 13 && cleaned.startsWith("86")) {
+      cleaned = cleaned.slice(2);
+    }
+    return cleaned;
+  }
+
+  function stripRegionSuffix(str) {
+    if (!str || typeof str !== "string" || str.length < 2) return str || "";
+    const clean = str.trim();
+    const stripped = clean.replace(/(?:维吾尔自治区|壮族自治区|回族自治区|自治区|特别行政区|市辖区|省|市|区|县)$/, "");
+    return stripped.length >= 2 ? stripped : clean;
+  }
+
+  function typedValuesLookEquivalent(left, right, writeMode = "text", field = null) {
+    if (left == null && right == null) return true;
+    if (left == null || right == null) return false;
+    const s1 = String(left).trim();
+    const s2 = String(right).trim();
+    if (!s1 && !s2) return true;
+    if (!s1 || !s2) return false;
+    if (s1 === s2) return true;
+    if (s1.toLowerCase() === s2.toLowerCase()) return true;
+
+    const labelContext = String(field?.label || field?.inferredLabel || "").toLowerCase();
+    const mode = writeMode || (field ? guessAutofillValueFieldType(field) : "text");
+
+    // 1. Phone numbers
+    if (
+      mode === "tel" ||
+      mode === "telephone" ||
+      mode === "phone" ||
+      /电话|手机|phone|mobile/i.test(labelContext) ||
+      (/^\+?[\d\s\-().（）]{7,}$/.test(s1) && /^\+?[\d\s\-().（）]{7,}$/.test(s2))
+    ) {
+      const p1 = normalizePhoneDigits(s1);
+      const p2 = normalizePhoneDigits(s2);
+      if (p1 && p2 && p1 === p2) {
+        return true;
+      }
+      return false;
     }
 
-    return normalizeChoiceLabel(normalizeDateValue(text))
-      .replace(/大学本科/g, "本科")
-      .replace(/学校级/g, "校级")
-      .replace(/学院级/g, "院级")
-      .replace(/离异/g, "离婚")
-      .replace(/厘米|cm|CM|千克|公斤|kg|KG|万元|万/g, "");
+    // 2. Email
+    if (mode === "email" || /邮箱|email/i.test(labelContext) || (s1.includes("@") && s2.includes("@"))) {
+      return s1.toLowerCase() === s2.toLowerCase();
+    }
+
+    // 3. ID / Certificate
+    if (mode === "id" || /身份证|证件号|passport/i.test(labelContext)) {
+      const id1 = s1.replace(/[\s\-]/g, "").toUpperCase();
+      const id2 = s2.replace(/[\s\-]/g, "").toUpperCase();
+      return id1 === id2;
+    }
+
+    // 4. Date
+    if (mode === "date" || /日期|时间|date|year|month/i.test(labelContext) || /\d{4}[年./-]/.test(s1)) {
+      const d1 = normalizeDateValue(s1);
+      const d2 = normalizeDateValue(s2);
+      if (d1 && d2) {
+        return d1 === d2;
+      }
+    }
+
+    // 5. Choices / Enumerations
+    const syn1 = getCanonicalSynonym(s1);
+    const syn2 = getCanonicalSynonym(s2);
+    if (syn1 && syn2 && syn1 === syn2) {
+      return true;
+    }
+
+    // 5b. Administrative region normalization (e.g. 北京市 vs 北京, 广东省 vs 广东)
+    const isRegionField =
+      mode === "region" ||
+      mode === "address" ||
+      mode === "city" ||
+      /城市|地区|省份|籍贯|户籍|地址|生源地|期望城市|工作地点|location|city|province|region/i.test(labelContext);
+
+    const isNameField = /姓名|名字|name/i.test(labelContext) && !/城市|地区|省份|籍贯|户籍|地址/i.test(labelContext);
+    const hasRegionSuffix = /(?:维吾尔自治区|壮族自治区|回族自治区|自治区|特别行政区|市辖区|省|市|区|县)$/;
+    if (!isNameField && (isRegionField || mode === "choice") && (hasRegionSuffix.test(s1) || hasRegionSuffix.test(s2))) {
+      const reg1 = stripRegionSuffix(s1);
+      const reg2 = stripRegionSuffix(s2);
+      if (reg1 && reg2 && reg1 === reg2) {
+        return true;
+      }
+    }
+
+    // 6. Number with units (e.g. 180cm vs 180, 50kg vs 50)
+    const stripped1 = s1.replace(/厘米|cm|CM|千克|公斤|kg|KG|万元|万/g, "").trim();
+    const stripped2 = s2.replace(/厘米|cm|CM|千克|公斤|kg|KG|万元|万/g, "").trim();
+    if (stripped1 && stripped2 && stripped1 === stripped2 && !isNaN(Number(stripped1))) {
+      return true;
+    }
+
+    return false;
   }
 
   function valuesLookEquivalent(left, right) {
-    const normalizedLeft = normalizeComparableValue(left);
-    const normalizedRight = normalizeComparableValue(right);
-    if (!normalizedLeft || !normalizedRight) {
-      return false;
-    }
-    return (
-      normalizedLeft === normalizedRight ||
-      normalizedLeft.includes(normalizedRight) ||
-      normalizedRight.includes(normalizedLeft)
-    );
+    return typedValuesLookEquivalent(left, right);
   }
 
   function summarizeDebugField(field) {
@@ -5516,7 +5684,7 @@
     return "本地规则完成字段匹配";
   }
 
-  async function enhancePlanWithAi(scan, localPlan) {
+  async function enhancePlanWithAi(scan, localPlan, options = {}) {
     const entries = Array.isArray(localPlan?.entries) ? localPlan.entries : getCurrentProfileEntries();
     const profileCatalog = buildProfileCatalogFromEntries(entries);
     if (profileCatalog.fields.length === 0) {
@@ -5530,7 +5698,8 @@
       type: "OJAF_MAP_FIELDS",
       payload: {
         scan,
-        profileCatalog
+        profileCatalog,
+        taskDeadline: options.taskDeadline
       }
     });
 
@@ -5555,7 +5724,7 @@
     };
   }
 
-  async function enhanceScanWithAi(scan) {
+  async function enhanceScanWithAi(scan, options = {}) {
     try {
       setAutofillAiTrying("表单字段识别");
       setAutofillProgress("AI 识别表单字段", 50, "正在识别字段名称和控件类型");
@@ -5563,7 +5732,8 @@
       const response = await sendRuntimeMessage({
         type: "OJAF_ANALYZE_PAGE_STRUCTURE",
         payload: {
-          scan
+          scan,
+          taskDeadline: options.taskDeadline
         }
       });
 
@@ -5580,18 +5750,12 @@
         if (!field) {
           continue;
         }
-        if (hint.label && (!field.label || field.label.length < 2 || (hint.confidence >= 0.68 && hint.label.length < field.label.length))) {
-          field.label = hint.label;
-        }
-        if (hint.section && (!field.section || field.section.length < 2 || (hint.confidence >= 0.68 && hint.section.length < field.section.length))) {
-          field.section = hint.section;
-        }
-        if (hint.controlKind && hint.controlKind !== "unknown") {
-          field.type = normalizeControlKind(field.type, hint.controlKind);
-        }
         field.aiHint = {
-          confidence: hint.confidence,
-          note: hint.note
+          label: hint.label || "",
+          section: hint.section || "",
+          controlKind: hint.controlKind || "",
+          confidence: hint.confidence || 0,
+          note: hint.note || ""
         };
       }
 
@@ -5640,13 +5804,14 @@
       setProfilePanelStatus("正在本地扫描当前页面并准备自动填写...");
       const baseScan = await scanForm();
       setAutofillProgress("整理表单字段", 42, `本地已发现 ${baseScan.fields.length} 个可见字段`);
-      const aiStructure = await enhanceScanWithAi(baseScan);
+      const aiTaskDeadline = Date.now() + 25000;
+      const aiStructure = await enhanceScanWithAi(baseScan, { taskDeadline: aiTaskDeadline });
       const scan = aiStructure.scan || baseScan;
       const localPlan = buildAutofillPlan(scan);
       let plan = localPlan;
 
       try {
-        const aiResult = await enhancePlanWithAi(scan, localPlan);
+        const aiResult = await enhancePlanWithAi(scan, localPlan, { taskDeadline: aiTaskDeadline });
         plan = aiResult.plan || plan;
       } catch (error) {
         setAutofillAiFallback("字段理解", error);
@@ -5794,19 +5959,42 @@
       const candidate = autoFillCandidates[index];
       const field = candidate.field;
       let element = await resolveFieldElement(field);
+      let status = "pending";
       let ok = false;
       let note = "";
 
       if (element) {
-        if (candidate.alreadyMatches) {
-          ok = true;
-          note = "当前值已匹配简历资料";
+        if (!element.isConnected) {
+          status = "stale";
+          ok = false;
+          note = "控件已从页面断开";
+        } else if (!isWritableTarget(element)) {
+          status = "skipped";
+          ok = false;
+          note = "目标控件只读或不可编辑";
         } else {
-          const fillResult = await fillElementSmart(element, candidate.value, field, candidate);
-          ok = Boolean(fillResult?.ok);
-          note = fillResult?.reason || fillResult?.warning || "";
+          const currentDomValue = getControlCurrentValue(element);
+          const alreadyMatchesNow = typedValuesLookEquivalent(currentDomValue, candidate.value, candidate.writeMode, field);
+          const snapshotVal = candidate.snapshotValue != null ? String(candidate.snapshotValue).trim() : "";
+          const currentCleanVal = String(currentDomValue == null ? "" : currentDomValue).trim();
+
+          if (alreadyMatchesNow) {
+            status = "verified";
+            ok = true;
+            note = "当前值已匹配简历资料";
+          } else if (snapshotVal !== currentCleanVal) {
+            status = "stale";
+            ok = false;
+            note = "当前控件已被用户修改，避免覆盖";
+          } else {
+            const fillResult = await fillElementSmart(element, candidate.value, field, candidate);
+            status = fillResult?.status || (fillResult?.ok ? "verified" : "failed");
+            ok = status === "verified";
+            note = fillResult?.reason || fillResult?.warning || "";
+          }
         }
       } else {
+        status = "failed";
         note = "未找到可自动填写控件";
       }
 
@@ -5823,6 +6011,7 @@
         id: candidate.id,
         fieldLabel: candidate.fieldLabel || candidate.sourceLabel || "",
         ok,
+        status,
         note,
         writeMode: candidate.writeMode || "",
         hasValue: Boolean(candidate.value)
@@ -5831,19 +6020,23 @@
       results.push({
         id: candidate.id,
         ok,
+        status,
         note
       });
     }
 
-    const filledCount = results.filter((result) => result.ok).length;
-    const failedCount = results.length - filledCount;
+    const filledCount = results.filter((result) => result.status === "verified").length;
+    const failedCount = results.filter((result) => result.status === "failed").length;
+    const staleCount = results.filter((result) => result.status === "stale").length;
     const skippedCount = await markDeferredPlanCandidates(plan, autoFillSet);
+    const pendingCount = results.filter((result) => result.status === "pending" || result.status === "failed" || result.status === "stale").length + skippedCount;
     const summary = {
       attempted: results.length,
       filled: filledCount,
       failed: failedCount,
+      stale: staleCount,
       skipped: skippedCount,
-      pending: failedCount + skippedCount,
+      pending: pendingCount,
       total: plan?.candidates?.length || results.length,
       message: `页面已标记：绿色为已填写，橙色为待处理。`,
       aiUsage: getAutofillAiSnapshot()
@@ -5901,29 +6094,42 @@
 
   async function fillElementSmart(element, value, field, candidate) {
     if (!element) {
-      return { ok: false, reason: "field not found" };
+      return { ok: false, status: "failed", reason: "field not found" };
+    }
+
+    if (!isWritableTarget(element)) {
+      return { ok: false, status: "skipped", reason: "field read-only or disabled" };
     }
 
     const type = getControlType(element);
-    if (element.disabled || element.getAttribute("aria-disabled") === "true") {
-      return { ok: false, reason: "field disabled" };
-    }
-
-    if (type === "file") {
-      return { ok: false, reason: "file upload requires manual selection" };
-    }
-
     const editableTarget = resolveEditableTarget(element);
     if (editableTarget && editableTarget !== element) {
       element = editableTarget;
     }
 
+    if (!isWritableTarget(element)) {
+      return { ok: false, status: "skipped", reason: "resolved target is not writable" };
+    }
+
     const text = compactText([candidate?.fieldLabel, field?.nearbyText, field?.placeholder, field?.name, field?.id, field?.section].join(" "));
     const isChoiceField = candidate?.writeMode === "choice" || /选择|请选择|下拉|选择项|单选/.test(text);
 
-    if (candidate?.writeMode === "date") {
-      setNativeValue(element, normalizeDateValue(value));
-      return { ok: true };
+    if (candidate?.writeMode === "date" || element.type === "date" || element.type === "month") {
+      let dateVal = normalizeDateValue(value);
+      if (element.type === "month") {
+        const ym = dateVal.match(/^(\d{4}-\d{2})/);
+        dateVal = ym ? ym[1] : dateVal;
+      } else if (element.type === "date") {
+        if (/^\d{4}-\d{2}$/.test(dateVal)) {
+          return { ok: false, status: "pending", reason: "日期控件需要完整年月日，简历资料仅含年月，避免补造未知日" };
+        }
+      }
+
+      setNativeValue(element, dateVal);
+      await sleep(30);
+      const readBack = getControlCurrentValue(element);
+      const matches = typedValuesLookEquivalent(readBack, dateVal, "date", field);
+      return { ok: matches, status: matches ? "verified" : "failed", reason: matches ? "" : "日期写入后校验失败" };
     }
 
     if (element instanceof HTMLInputElement && ["checkbox", "radio"].includes(element.type)) {
@@ -5937,18 +6143,18 @@
     if (type === "combobox" || element.getAttribute?.("role") === "combobox" || element.closest?.('[role="combobox"]')) {
       const choiceResult = await tryFillCustomChoiceField(element, value, field);
       if (choiceResult.ok) {
-        return choiceResult;
+        return { ok: true, status: "verified" };
       }
 
       let wroteInnerInput = false;
       const textInput = element.querySelector?.('input:not([type="hidden"]),textarea,[contenteditable="true"]');
-      if (textInput && textInput !== element) {
+      if (textInput && textInput !== element && isWritableTarget(textInput)) {
         setNativeValue(textInput, value);
         wroteInnerInput = true;
       }
 
       const virtualDisplay = element.querySelector?.(
-        '.ant-select-selection-item, .el-select__selected-item, .arco-select-view-value, [class*="selection-item"], [class*="select-value"], [class*="selected-item"], [class*="selection-search-input"]'
+        '.ant-select-selection-item, .el-select__selected-item, .arco-select-view-value, [class*="selection-item"], [class*="select-value"], [class*="selected-item"]'
       );
       if (virtualDisplay) {
         if (virtualDisplay.tagName === "INPUT" || virtualDisplay.tagName === "TEXTAREA") {
@@ -5958,36 +6164,50 @@
         }
         element.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
         element.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
-        return { ok: true, warning: wroteInnerInput ? "combobox virtual display and inner input updated" : "combobox virtual display updated" };
+        if (candidate?.writeMode === "direct") {
+          return { ok: true, status: "verified", warning: wroteInnerInput ? "combobox virtual display and inner input updated" : "combobox virtual display updated" };
+        }
+        return { ok: false, status: "pending", reason: "combobox 未能匹配选中实际下拉选项，已转入待处理" };
       }
 
       if (wroteInnerInput) {
         element.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
         element.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
-        return { ok: true, warning: "combobox fallback wrote into inner input only" };
+        return { ok: false, status: "pending", reason: "combobox 仅在搜索输入框填写了文本，尚未选中具体选项" };
       }
+
+      return { ok: false, status: "pending", reason: choiceResult.reason || "下拉控件无匹配选项" };
     }
 
     if (element instanceof HTMLSelectElement) {
-      const matched = setSelectValue(element, value);
-      return { ok: true, warning: matched ? "" : "下拉选项需要手动确认，已尝试按原值填写" };
+      const selectResult = setSelectValue(element, value);
+      if (selectResult.ok) {
+        return { ok: true, status: "verified" };
+      }
+      return { ok: false, status: selectResult.status || "pending", reason: selectResult.reason || "下拉选项无匹配" };
     }
 
     if (element.isContentEditable) {
       setContentEditableValue(element, value);
-      return { ok: true };
+      await sleep(30);
+      const readBack = element.textContent || "";
+      const matches = typedValuesLookEquivalent(readBack, value, "text", field);
+      return { ok: matches, status: matches ? "verified" : "failed" };
     }
 
     if (isChoiceField) {
       const choiceResult = await tryFillCustomChoiceField(element, value, field);
       if (choiceResult.ok) {
-        return choiceResult;
+        return { ok: true, status: "verified" };
       }
     }
 
     element.focus();
     setNativeValue(element, value);
-    return { ok: true };
+    await sleep(30);
+    const readBack = getControlCurrentValue(element);
+    const matches = typedValuesLookEquivalent(readBack, value, candidate?.writeMode || type, field);
+    return { ok: matches, status: matches ? "verified" : "failed", reason: matches ? "" : "控件设置后读回不一致" };
   }
 
   function resolveEditableTarget(element) {
@@ -6001,16 +6221,19 @@
       element instanceof HTMLSelectElement ||
       element.isContentEditable
     ) {
-      return element;
+      return isWritableTarget(element) ? element : null;
     }
 
     const role = element.getAttribute("role");
     if (role === "radio" || role === "checkbox" || role === "combobox" || element.matches?.('[role="combobox"]')) {
-      return element;
+      return isWritableTarget(element) ? element : null;
     }
 
     const input = element.querySelector?.('input:not([type="hidden"]),textarea,[contenteditable="true"]');
-    return input || element;
+    if (input && isWritableTarget(input)) {
+      return input;
+    }
+    return isWritableTarget(element) ? element : null;
   }
 
   function fillRoleChoice(element, value, field, candidate) {
@@ -6025,30 +6248,38 @@
 
     if (matched) {
       clickActionElement(matched);
-      return { ok: true };
+      return { ok: true, status: "verified" };
     }
 
-    if (role === "checkbox" && /^(是|yes|true|1|on)$/i.test(target)) {
-      clickActionElement(element);
-      return { ok: true };
+    if (role === "checkbox") {
+      const isCurrentlyChecked = element.getAttribute("aria-checked") === "true" || element.checked === true;
+      const shouldCheck = /^(是|yes|true|1|on|checked)$/i.test(target);
+      if (isCurrentlyChecked !== shouldCheck) {
+        clickActionElement(element);
+      }
+      const postChecked = element.getAttribute("aria-checked") === "true" || element.checked === true;
+      const verified = postChecked === shouldCheck;
+      return { ok: verified, status: verified ? "verified" : "failed", reason: verified ? "" : "角色复选框状态未能正确更新" };
     }
 
     if (role === "radio") {
-      clickActionElement(element);
-      return { ok: true };
+      return { ok: false, status: "pending", reason: "未找到匹配的单选按钮选项" };
     }
 
-    return { ok: false, reason: "no matching role choice found" };
+    return { ok: false, status: "pending", reason: "no matching role choice found" };
   }
 
   function fillBooleanOrRadioChoice(element, value, field, candidate) {
     if (element instanceof HTMLInputElement && element.type === "checkbox") {
       setCheckboxOrRadio(element, value);
-      return { ok: true };
+      const normalized = String(value).trim().toLowerCase();
+      const shouldCheck = ["true", "yes", "是", "1", "checked", "on"].includes(normalized);
+      const verified = element.checked === shouldCheck;
+      return { ok: verified, status: verified ? "verified" : "failed", reason: verified ? "" : "原生复选框状态未能正确更新" };
     }
 
     if (!(element instanceof HTMLInputElement) || element.type !== "radio") {
-      return { ok: false, reason: "unsupported choice field" };
+      return { ok: false, status: "failed", reason: "unsupported choice field" };
     }
 
     const target = normalizeChoiceValue(value, candidate?.fieldLabel || field?.label || "");
@@ -6058,7 +6289,7 @@
     let matched = null;
 
     for (const radio of group) {
-      const radioLabel = normalizeChoiceLabel(getChoiceLabelText(radio));
+      const radioLabel = getChoiceLabelText(radio);
       if (radioLabel && choiceTextMatches(radioLabel, target)) {
         matched = radio;
         break;
@@ -6070,12 +6301,12 @@
     }
 
     if (!matched) {
-      return { ok: false, reason: "no matching radio option" };
+      return { ok: false, status: "pending", reason: "未找到匹配的单选选项" };
     }
 
     matched.click();
     matched.dispatchEvent(new Event("change", { bubbles: true }));
-    return { ok: true };
+    return { ok: true, status: "verified" };
   }
 
   function getChoiceLabelText(element) {
@@ -6154,12 +6385,119 @@
   }
 
   function choiceTextMatches(label, target) {
-    const left = normalizeChoiceLabel(label);
-    const right = normalizeChoiceLabel(target);
-    if (!left || !right) {
+    if (!label || !target) {
       return false;
     }
-    return left === right || left.includes(right) || right.includes(left);
+    const cleanLabel = normalizeText(label, 120);
+    const cleanTarget = normalizeText(target, 120);
+    if (!cleanLabel || !cleanTarget) {
+      return false;
+    }
+    return typedValuesLookEquivalent(cleanLabel, cleanTarget, "choice");
+  }
+
+  function findOwnedChoicePopup(element, container) {
+    if (!element && !container) {
+      return null;
+    }
+
+    // 1. Explicit ARIA references (aria-controls / aria-owns)
+    const controlsId = element?.getAttribute?.("aria-controls") || container?.getAttribute?.("aria-controls");
+    if (controlsId) {
+      const el = document.getElementById(controlsId);
+      if (el && isVisible(el)) return el;
+    }
+
+    const ownsId = element?.getAttribute?.("aria-owns") || container?.getAttribute?.("aria-owns");
+    if (ownsId) {
+      const el = document.getElementById(ownsId);
+      if (el && isVisible(el)) return el;
+    }
+
+    // 2. Adapter popup selector if present
+    const adapterSelectors = getAdapterSelectors();
+    if (adapterSelectors.popupSelector) {
+      const popup = document.querySelector(adapterSelectors.popupSelector);
+      if (popup && isVisible(popup)) return popup;
+    }
+
+    // 3. Child popup inside container
+    if (container && container.querySelector) {
+      const innerPopup = container.querySelector('[role="listbox"], [class*="dropdown-menu"], [class*="select-dropdown"], [class*="picker"]');
+      if (innerPopup && isVisible(innerPopup)) return innerPopup;
+    }
+
+    // 4. Open/visible top-level overlay containers in document (strictly bounded to popup containers)
+    const overlaySelectors = [
+      '.ant-select-dropdown:not(.ant-select-dropdown-hidden)',
+      '.ant-cascader-dropdown:not(.ant-cascader-dropdown-hidden)',
+      '.el-select-dropdown:not([style*="display: none"]):not([style*="display:none"])',
+      '.el-cascader__dropdown:not([style*="display: none"]):not([style*="display:none"])',
+      '[role="listbox"]:not([data-ojaf-hidden])',
+      '.select-dropdown:not([style*="display: none"]):not([style*="display:none"])',
+      '.dropdown-menu.show'
+    ];
+    for (const sel of overlaySelectors) {
+      try {
+        const foundList = Array.from(document.querySelectorAll(sel)).filter((el) => isVisible(el) && !el.closest(`#${PANEL_ID}`));
+        if (foundList.length === 1) {
+          return foundList[0];
+        }
+      } catch {}
+    }
+
+    return null;
+  }
+
+  function findVisibleChoiceOptions(container, element) {
+    const ownedPopup = findOwnedChoicePopup(element, container);
+    const roots = [];
+    if (ownedPopup) {
+      roots.push(ownedPopup);
+    }
+    if (container && container !== ownedPopup && container.querySelectorAll) {
+      roots.push(container);
+    }
+
+    // Strictly bounded option selectors: NEVER include bare global 'li'
+    const selectors = [
+      '[role="option"]',
+      '.ant-select-item-option',
+      '.el-select-dropdown__item',
+      '.rc-select-item-option',
+      '.ant-cascader-menu-item',
+      '.el-cascader-node',
+      '[class*="option-item"]',
+      '[class*="select-item"]',
+      '[class*="dropdown-item"]',
+      'ul[role="listbox"] > li',
+      '.ant-select-dropdown li',
+      '.el-select-dropdown li'
+    ].join(",");
+
+    const seen = new Set();
+    const options = [];
+
+    for (const scope of roots) {
+      for (const option of Array.from(scope.querySelectorAll(selectors))) {
+        if (!(option instanceof Element) || seen.has(option)) {
+          continue;
+        }
+        seen.add(option);
+        if (option.closest(`#${PANEL_ID}`)) {
+          continue;
+        }
+        if (!isVisible(option)) {
+          continue;
+        }
+        const text = getElementText(option);
+        if (text && text.length <= 120) {
+          options.push(option);
+        }
+      }
+    }
+
+    return options;
   }
 
   async function tryFillCustomChoiceField(element, value, field) {
@@ -6178,18 +6516,21 @@
     await sleep(220);
 
     const target = normalizeChoiceValue(value, inferFieldLabel(field));
-    const hierarchicalResult = await tryFillHierarchicalChoiceOptions(value, target);
+    const hierarchicalResult = await tryFillHierarchicalChoiceOptions(value, target, element, container);
     if (hierarchicalResult.ok) {
       return hierarchicalResult;
     }
 
-    const options = findVisibleChoiceOptions(container);
-    const matched = options.find((option) => choiceTextMatches(getElementText(option), target) || choiceTextMatches(option.getAttribute("aria-label") || "", target));
+    const options = findVisibleChoiceOptions(container, element);
+    const matching = options.filter((option) => choiceTextMatches(getElementText(option), target) || choiceTextMatches(option.getAttribute("aria-label") || "", target));
 
-    if (matched) {
-      clickActionElement(matched);
+    if (matching.length > 1) {
+      return { ok: false, status: "pending", reason: `下拉浮层存在多个等价选项（存在歧义）: ${target}` };
+    }
+    if (matching.length === 1) {
+      clickActionElement(matching[0]);
       await sleep(120);
-      return { ok: true };
+      return { ok: true, status: "verified" };
     }
 
     const searchInput =
@@ -6199,41 +6540,58 @@
     if (searchInput) {
       setNativeValue(searchInput, value);
       await sleep(160);
-      const retryOptions = findVisibleChoiceOptions(container);
-      const retryMatched = retryOptions.find((option) => choiceTextMatches(getElementText(option), target) || choiceTextMatches(option.getAttribute("aria-label") || "", target));
-      if (retryMatched) {
-        clickActionElement(retryMatched);
+      const retryOptions = findVisibleChoiceOptions(container, element);
+      const retryMatching = retryOptions.filter((option) => choiceTextMatches(getElementText(option), target) || choiceTextMatches(option.getAttribute("aria-label") || "", target));
+      if (retryMatching.length > 1) {
+        return { ok: false, status: "pending", reason: `重试搜索后下拉浮层存在多个等价选项（存在歧义）: ${target}` };
+      }
+      if (retryMatching.length === 1) {
+        clickActionElement(retryMatching[0]);
         await sleep(120);
-        return { ok: true };
+        return { ok: true, status: "verified" };
       }
     }
 
-    return { ok: false, reason: "no matching option found" };
+    return { ok: false, status: "pending", reason: "no matching option found" };
   }
 
-  async function tryFillHierarchicalChoiceOptions(value, target) {
+  async function tryFillHierarchicalChoiceOptions(value, target, element, container) {
     const parts = splitHierarchicalChoiceValue(value);
     if (parts.length < 2) {
       return { ok: false, reason: "not hierarchical" };
     }
 
-    let matchedAny = false;
     for (const part of parts) {
-      const options = findVisibleChoiceOptions(document);
-      const matched = options.find((option) => {
+      const options = findVisibleChoiceOptions(container, element);
+      const matchedList = options.filter((option) => {
         const text = getElementText(option);
-        return choiceTextMatches(text, part) || choiceTextMatches(text, target);
+        return choiceTextMatches(text, part);
       });
-      if (!matched) {
-        return matchedAny ? { ok: true, warning: "hierarchical choice partially matched" } : { ok: false, reason: "no matching hierarchical option" };
+      if (matchedList.length > 1) {
+        return { ok: false, status: "pending", reason: `级联选项在层级 ${part} 存在多个匹配项（存在歧义）` };
+      }
+      if (matchedList.length === 0) {
+        // Multi-tier MUST match all levels. Partial match is strictly pending/failed!
+        return { ok: false, status: "pending", reason: `级联选项未能完整匹配所有层级 (${part} 未找到)` };
       }
 
-      clickActionElement(matched);
-      matchedAny = true;
+      clickActionElement(matchedList[0]);
       await sleep(180);
     }
 
-    return { ok: matchedAny };
+    await sleep(120);
+    const finalDomVal = getControlCurrentValue(element);
+    const lastTier = parts[parts.length - 1];
+    const isVerified = Boolean(
+      finalDomVal &&
+      (typedValuesLookEquivalent(finalDomVal, value, "choice") ||
+       finalDomVal.includes(lastTier) ||
+       typedValuesLookEquivalent(finalDomVal, lastTier, "choice"))
+    );
+    if (isVerified) {
+      return { ok: true, status: "verified" };
+    }
+    return { ok: false, status: "pending", reason: "级联选择后读回校验不一致或未就绪" };
   }
 
   function splitHierarchicalChoiceValue(value) {
@@ -6268,46 +6626,6 @@
     return element.parentElement || element;
   }
 
-  function findVisibleChoiceOptions(container) {
-    const selectors = [
-      '[role="option"]',
-      "[aria-selected]",
-      "li",
-      ".ant-select-item-option",
-      ".rc-select-item-option",
-      ".ant-cascader-menu-item",
-      ".ant-picker-cell",
-      '[class*="option"]',
-      '[class*="Option"]',
-      '[class*="select-item"]',
-      '[class*="dropdown-item"]'
-    ].join(",");
-    const roots = [container && container.querySelectorAll ? container : null, document].filter(Boolean);
-    const seen = new Set();
-    const options = [];
-
-    for (const scope of roots) {
-      for (const option of Array.from(scope.querySelectorAll(selectors))) {
-        if (!(option instanceof Element) || seen.has(option)) {
-          continue;
-        }
-        seen.add(option);
-        if (option.closest(`#${PANEL_ID}`)) {
-          continue;
-        }
-        if (!isVisible(option)) {
-          continue;
-        }
-        const text = getElementText(option);
-        if (text && text.length <= 120) {
-          options.push(option);
-        }
-      }
-    }
-
-    return options;
-  }
-
   function renderQuickCopyList(panel) {
     const list = panel.querySelector('[data-role="quick-copy-list"]');
     if (!list) {
@@ -6315,242 +6633,31 @@
     }
 
     list.textContent = "";
-
-    if (!hasCurrentProfileData()) {
-      const empty = document.createElement("div");
-      empty.className = "arf-empty";
-      empty.textContent = currentProfileLoadPromise
-        ? "正在加载简历资料..."
-        : "点击“设置”后先保存简历资料，这里会显示可参考和复制的内容。";
-      list.append(empty);
-      return;
-    }
-
-    const filterText = compactText(sidebarFilter);
-    const allSections = getCurrentProfileSections();
-    const sections = allSections
-      .map((group) => ({
-        ...group,
-        items: filterText
-          ? group.items.filter((item) => {
-              return compactText(`${group.category} ${item.subsection || ""} ${item.label} ${item.value}`).includes(filterText);
-            })
-          : group.items
-      }))
-      .filter((group) => group.items.length > 0);
-
-    if (sections.length === 0) {
-      const empty = document.createElement("div");
-      empty.className = "arf-empty";
-      empty.textContent = sidebarFilter ? "没有匹配的资料项。" : "资料里还没有可展示的字段内容。";
-      list.append(empty);
-      return;
-    }
-
-    const activeSection = !filterText
-      ? sections.find((section) => section.category === activeProfileCategory)
-      : null;
-
-    if (activeSection) {
-      renderProfileReferenceDetail(list, activeSection);
-      return;
-    }
-
-    if (filterText) {
-      renderProfileReferenceSearchResults(list, sections);
-      return;
-    }
-
-    renderProfileReferenceOverview(list, sections);
-  }
-
-  function renderProfileReferenceOverview(root, sections) {
-    const overview = document.createElement("div");
-    overview.className = "arf-overview";
-
-    for (const section of sections) {
-      const displayTitle = getProfileSectionTitle(section);
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "arf-category-card";
-      button.dataset.category = section.category;
-
-      const main = document.createElement("div");
-      const title = document.createElement("div");
-      title.className = "arf-category-title";
-      title.textContent = displayTitle;
-      const note = document.createElement("div");
-      note.className = "arf-category-note";
-      note.textContent = summarizeProfileSection(section);
-      main.append(title, note);
-
-      const count = document.createElement("div");
-      count.className = "arf-category-count";
-      count.textContent = String(section.items.length);
-
-      button.append(main, count);
-      button.addEventListener("click", () => {
-        activeProfileCategory = section.category;
-        renderAndSaveProfilePanel();
-      });
-      overview.append(button);
-    }
-
-    root.append(overview);
-  }
-
-  function renderProfileReferenceSearchResults(root, sections) {
-    const head = document.createElement("div");
-    head.className = "arf-detail-head";
-    const title = document.createElement("div");
-    title.className = "arf-detail-title";
-    const total = sections.reduce((sum, section) => sum + section.items.length, 0);
-    title.textContent = `搜索结果 ${total} 条`;
-    head.append(title);
-    root.append(head);
-
-    for (const section of sections) {
-      renderProfileReferenceRows(root, section, { compactTitle: true });
-    }
-  }
-
-  function renderProfileReferenceDetail(root, section) {
-    const head = document.createElement("div");
-    head.className = "arf-detail-head";
-
-    const back = document.createElement("button");
-    back.type = "button";
-    back.className = "arf-back";
-    back.textContent = "返回";
-    back.addEventListener("click", () => {
-      activeProfileCategory = "";
-      renderAndSaveProfilePanel();
-    });
-
-    const title = document.createElement("div");
-    title.className = "arf-detail-title";
-    title.textContent = `${getProfileSectionTitle(section) || section.category} · ${section.items.length} 条`;
-    head.append(back, title);
-    root.append(head);
-
-    renderProfileReferenceRows(root, section);
-  }
-
-  function renderProfileReferenceRows(root, section, options = {}) {
-    const groups = groupItemsBySubsection(section.items);
-    for (const group of groups) {
-      const card = document.createElement("div");
-      card.className = "arf-detail-card arf-readable";
-
-      const subtitle = document.createElement("div");
-      subtitle.className = "arf-subsection-title";
-      subtitle.textContent = group.subsection || (options.compactTitle ? getProfileSectionTitle(section) || section.category : "详情");
-      card.append(subtitle);
-
-      for (const item of group.items) {
-        const row = document.createElement("div");
-        row.className = "arf-row";
-
-        const label = document.createElement("div");
-        label.className = "arf-row-label";
-        label.textContent = item.label;
-
-        const value = document.createElement("div");
-        value.className = `arf-row-value${item.hasValue ? "" : " is-empty"}`;
-        value.textContent = item.hasValue ? item.value : "未填写";
-
-        row.append(label, value);
-        card.append(row);
-      }
-
-      root.append(card);
-    }
-  }
-
-  function groupItemsBySubsection(items) {
-    const groups = [];
-    for (const item of items) {
-      const subsection = item.subsection || "";
-      let group = groups.find((entry) => entry.subsection === subsection);
-      if (!group) {
-        group = { subsection, items: [] };
-        groups.push(group);
-      }
-      group.items.push(item);
-    }
-    return groups;
-  }
-
-  function summarizeProfileSection(section) {
-    const filled = section.items.filter((item) => item.hasValue);
-    const source = filled.length > 0 ? filled : section.items;
-    const labels = source.slice(0, 5).map((item) => item.label).join("、");
-    if (!labels) {
-      return "点开查看资料";
-    }
-    return labels;
-  }
-
-  async function copyActiveCategory() {
-    const section = getCurrentProfileSections().find((item) => item.category === activeProfileCategory);
-    if (!section) {
-      setProfilePanelStatus("先点进一个分类，再复制本类内容。", true);
-      return;
-    }
-
-    try {
-      await copyTextToClipboard(formatProfileSectionForCopy(section));
-      setProfilePanelStatus(`已复制：${getProfileSectionTitle(section) || section.category}`);
-    } catch (error) {
-      setProfilePanelStatus(`复制失败：${error.message}`, true);
-    }
-  }
-
-  function formatProfileSectionForCopy(section) {
-    const title = getProfileSectionTitle(section) || section.category;
-    const lines = [`## ${title}`];
-    for (const group of groupItemsBySubsection(section.items)) {
-      if (group.subsection) {
-        lines.push("", `### ${group.subsection}`);
-      }
-      for (const item of group.items) {
-        lines.push(`- ${item.label}：${item.value || ""}`);
-      }
-    }
-    return `${lines.join("\n").trim()}\n`;
+    const notice = document.createElement("div");
+    notice.className = "arf-privacy-notice";
+    notice.style.padding = "14px";
+    notice.style.color = "#555";
+    notice.style.fontSize = "13px";
+    notice.style.lineHeight = "1.6";
+    notice.textContent = "【隐私隔离保护】为防止目标网站脚本读取个人信息，简历数据严格隔离在扩展内部存储中，不再注入当前网页 DOM。查看或编辑完整简历请点击下方“设置”。";
+    list.appendChild(notice);
   }
 
   function renderProfilePanel() {
     const panel = ensureProfilePanel();
     const status = panel.querySelector('[data-role="status"]');
     const collapseBtn = panel.querySelector('[data-action="collapse"]');
-    const homeBtn = panel.querySelector('[data-action="home"]');
-    const copyCategoryBtn = panel.querySelector('[data-action="copy-category"]');
-    const searchInput = panel.querySelector('[data-role="quick-copy-search"]');
     const progress = panel.querySelector('[data-role="progress"]');
     const progressFill = panel.querySelector('[data-role="progress-fill"]');
     const progressStage = panel.querySelector('[data-role="progress-stage"]');
     const progressDetail = panel.querySelector('[data-role="progress-detail"]');
-    const sections = getCurrentProfileSections();
-    const activeSection = sections.find((section) => section.category === activeProfileCategory);
-    const inProgress = Boolean(autofillInProgress || autofillProgress.active);
-    if (activeProfileCategory && !activeSection) {
-      activeProfileCategory = "";
-    }
+
     panel.setAttribute(PANEL_COLLAPSED_ATTR, profilePanelCollapsed ? "true" : "false");
     if (collapseBtn) {
-      collapseBtn.textContent = profilePanelCollapsed ? "资料" : "收起";
-      collapseBtn.title = profilePanelCollapsed ? "展开 OpenJobAutofill 资料面板" : "收起 OpenJobAutofill 资料面板";
+      collapseBtn.textContent = profilePanelCollapsed ? "展开" : "收起";
+      collapseBtn.title = profilePanelCollapsed ? "展开 OpenJobAutofill 状态面板" : "收起 OpenJobAutofill 状态面板";
     }
-    if (copyCategoryBtn) {
-      copyCategoryBtn.disabled = !activeSection;
-    }
-    if (homeBtn) {
-      homeBtn.disabled = false;
-    }
-    if (searchInput && searchInput.value !== sidebarFilter) {
-      searchInput.value = sidebarFilter;
-    }
+
     if (progress && progressFill && progressStage && progressDetail) {
       progress.hidden = !autofillProgress.active;
       progressFill.style.width = `${getDisplayedProgressPercent()}%`;
@@ -6559,19 +6666,17 @@
         : "";
       progressDetail.textContent = autofillProgress.active ? getAutofillProgressDetail() : "";
     }
+
     if (status) {
       status.style.color = "#6f6a60";
-      const totalItems = sections.reduce((sum, group) => sum + group.items.length, 0);
       const adapter = getActiveSiteAdapter();
       const adapterLabel = adapter ? `${adapter.name || adapter.id || "通用"} · ` : "";
       if (autofillProgress.active) {
         status.textContent = `${adapterLabel}${getAutofillProgressDetail() || getAutofillProgressTitle() || autofillProgress.stage || "正在处理"}`;
+      } else if (autofillSummary) {
+        status.textContent = `${adapterLabel}填表完成：${autofillSummary.verified || 0} 项已填，${getPendingCount(autofillSummary)} 项待处理。`;
       } else {
-        status.textContent = activeSection
-          ? `${adapterLabel}正在查看：${getProfileSectionTitle(activeSection) || activeSection.category}。内容可直接选中复制。`
-          : totalItems > 0
-            ? `${adapterLabel}已加载 ${sections.length} 个分类、${totalItems} 条本地资料。`
-            : `${adapterLabel}资料仅从浏览器本地加载（保护隐私）。`;
+        status.textContent = `${adapterLabel}就绪。点击插件图标或快捷键开始自动填写。`;
       }
     }
 
@@ -6807,29 +6912,69 @@
     }
   }
 
-  function setSelectValue(element, value) {
-    const stringValue = String(value || "").trim();
-    const normalizedTarget = normalizeChoiceLabel(stringValue);
-    const matchedOption = Array.from(element.options).find((option) => {
-      const optionValue = normalizeText(option.value || "", 120);
-      const optionLabel = normalizeText(option.textContent || "", 120);
-      return (
-        option.value === stringValue ||
-        optionLabel === stringValue ||
-        normalizeChoiceLabel(optionValue) === normalizedTarget ||
-        normalizeChoiceLabel(optionLabel) === normalizedTarget ||
-        optionLabel.includes(stringValue) ||
-        stringValue.includes(optionLabel)
-      );
-    });
+  function isSelectionPlaceholder(text) {
+    if (!text) return true;
+    const clean = String(text).trim().toLowerCase();
+    return /^(?:请选择|选择|请选择一项|不限|全部|select|choose|please select|none|-{2,}|—{2,})/i.test(clean);
+  }
 
-    if (matchedOption) {
-      setNativeValue(element, matchedOption.value);
-      return true;
+  function setSelectValue(element, value) {
+    if (!(element instanceof HTMLSelectElement)) {
+      return { ok: false, status: "failed", reason: "目标元素不是 select 元素" };
     }
 
-    setNativeValue(element, stringValue);
-    return false;
+    const stringValue = String(value == null ? "" : value).trim();
+    if (!stringValue) {
+      return { ok: false, status: "skipped", reason: "目标选项值为空" };
+    }
+
+    // Filter valid options: exclude disabled options and placeholder options (empty value/placeholder text)
+    const validOptions = Array.from(element.options).filter((option) => {
+      if (option.disabled) return false;
+      const optVal = String(option.value || "").trim();
+      const optText = String(option.textContent || "").trim();
+      if (!optVal && isSelectionPlaceholder(optText)) return false;
+      if (!optVal && !optText) return false;
+      return true;
+    });
+
+    let matchingOptions = [];
+
+    // 1. Exact value match
+    matchingOptions = validOptions.filter((opt) => String(opt.value || "").trim() === stringValue);
+
+    // 2. Exact label match
+    if (matchingOptions.length === 0) {
+      matchingOptions = validOptions.filter((opt) => String(opt.textContent || "").trim() === stringValue);
+    }
+
+    // 3. Controlled synonym & normalized match (NO substring .includes())
+    if (matchingOptions.length === 0) {
+      matchingOptions = validOptions.filter((opt) => {
+        const optVal = String(opt.value || "").trim();
+        const optText = String(opt.textContent || "").trim();
+        return typedValuesLookEquivalent(optText, stringValue, "choice", { label: stringValue }) ||
+               typedValuesLookEquivalent(optVal, stringValue, "choice", { label: stringValue });
+      });
+    }
+
+    if (matchingOptions.length > 1) {
+      return { ok: false, status: "pending", reason: `下拉选项存在多个等价匹配项（存在歧义）: ${stringValue}` };
+    }
+
+    if (matchingOptions.length === 1) {
+      const matchedOption = matchingOptions[0];
+      setNativeValue(element, matchedOption.value);
+      const isVerified = element.value === matchedOption.value ||
+        Array.from(element.selectedOptions || []).some((opt) => opt === matchedOption || opt.value === matchedOption.value);
+      if (isVerified) {
+        return { ok: true, status: "verified", matchedOption };
+      }
+      return { ok: false, status: "failed", reason: "select 设置后读回校验不一致" };
+    }
+
+    // CRITICAL: On mismatch, do NOT mutate element.value, return pending
+    return { ok: false, status: "pending", reason: `未在下拉选项中找到匹配项: ${stringValue}` };
   }
 
   function setContentEditableValue(element, value) {
@@ -6844,14 +6989,37 @@
     } catch {}
   }
 
-  function findElementByCssPath(cssPath) {
+  function isControlTypeCompatible(controlType, expectedType) {
+    if (!controlType || !expectedType) return true;
+    const c = String(controlType).toLowerCase();
+    const e = String(expectedType).toLowerCase();
+    if (c === e) return true;
+    if (["text", "textarea", "contenteditable"].includes(c) && ["text", "textarea", "contenteditable"].includes(e)) return true;
+    if (["select", "combobox"].includes(c) && ["select", "combobox", "choice"].includes(e)) return true;
+    if (["radio", "checkbox"].includes(c) && ["radio", "checkbox", "choice"].includes(e)) return true;
+    if (["date", "month"].includes(c) && ["date", "month"].includes(e)) return true;
+    return false;
+  }
+
+  function findElementByCssPath(cssPath, field = null) {
     if (!cssPath) {
       return null;
     }
 
     try {
-      const element = document.querySelector(cssPath);
-      return element && isVisible(element) ? element : null;
+      const elements = Array.from(document.querySelectorAll(cssPath)).filter((el) => isVisible(el));
+      if (elements.length === 1 && isWritableTarget(elements[0])) {
+        const el = elements[0];
+        if (field) {
+          const elType = getControlType(el);
+          const fieldType = field.type || field.snapshotType;
+          if (fieldType && elType && !isControlTypeCompatible(elType, fieldType)) {
+            return null;
+          }
+        }
+        return el;
+      }
+      return null;
     } catch {
       return null;
     }
@@ -6883,19 +7051,31 @@
   }
 
   function findControlByMetadata(field) {
-    const controls = collectVisibleControls();
+    const controls = collectVisibleControls().filter((el) => isWritableTarget(el));
     let best = null;
     let bestScore = 0;
+    let secondBestScore = 0;
 
     for (const element of controls) {
       const score = scoreControlForField(element, field);
       if (score > bestScore) {
-        best = element;
+        secondBestScore = bestScore;
         bestScore = score;
+        best = element;
+      } else if (score === bestScore) {
+        secondBestScore = score;
       }
     }
 
-    return bestScore >= 8 ? best : null;
+    if (bestScore >= 8 && bestScore > secondBestScore) {
+      const elType = getControlType(best);
+      const fieldType = field?.type || field?.snapshotType;
+      if (fieldType && elType && !isControlTypeCompatible(elType, fieldType)) {
+        return null;
+      }
+      return best;
+    }
+    return null;
   }
 
   function findFieldElement(field) {
@@ -6910,7 +7090,7 @@
       }
     }
 
-    const cssPathMatch = findElementByCssPath(field.cssPath);
+    const cssPathMatch = findElementByCssPath(field.cssPath, field);
     if (cssPathMatch && cssPathMatch.matches(CONTROL_SELECTOR)) {
       return cssPathMatch;
     }
@@ -6992,31 +7172,46 @@
     return element;
   }
 
+  const processedRequestIds = new Map();
+
   async function handleContentMessage(message) {
+    const requestId = message?.requestId;
+    if (requestId && processedRequestIds.has(requestId)) {
+      const cached = processedRequestIds.get(requestId);
+      if (Date.now() - cached.timestamp < 60000) {
+        return cached.result;
+      }
+    }
+
+    let result;
     if (message.type === "OJAF_SHOW_PROFILE_PANEL") {
       showProfilePanel();
       renderProfilePanel();
-      return { visible: true };
-    }
-
-    if (message.type === "OJAF_START_AUTOFILL") {
-      return runOneClickAutofill();
-    }
-
-    if (message.type === "OJAF_GET_RUNTIME_STATE") {
-      return getAutofillRuntimeState();
-    }
-
-    if (message.type === "OJAF_GET_DEBUG_SNAPSHOT") {
-      return getAutofillDebugSnapshot();
-    }
-
-    if (message.type === "OJAF_CLEAR_MARKS") {
+      result = { visible: true };
+    } else if (message.type === "OJAF_START_AUTOFILL") {
+      result = await runOneClickAutofill();
+    } else if (message.type === "OJAF_GET_RUNTIME_STATE") {
+      result = getAutofillRuntimeState();
+    } else if (message.type === "OJAF_GET_DEBUG_SNAPSHOT") {
+      result = getAutofillDebugSnapshot();
+    } else if (message.type === "OJAF_CLEAR_MARKS") {
       clearMarks();
-      return {};
+      result = {};
     }
 
-    return undefined;
+    if (requestId && result !== undefined) {
+      processedRequestIds.set(requestId, { timestamp: Date.now(), result });
+      if (processedRequestIds.size > 100) {
+        const now = Date.now();
+        for (const [id, entry] of processedRequestIds.entries()) {
+          if (now - entry.timestamp > 60000) {
+            processedRequestIds.delete(id);
+          }
+        }
+      }
+    }
+
+    return result;
   }
 
   const messageHandler = (message, _sender, sendResponse) => {
@@ -7058,7 +7253,18 @@
       getRepeaterIndex,
       isCandidateExcludedByFkgNegativeOrScope,
       buildFieldMeta,
-      scoreAutofillCandidate
+      scoreAutofillCandidate,
+      typedValuesLookEquivalent,
+      isWritableTarget,
+      findElementByCssPath,
+      findControlByMetadata,
+      ensureProfilePanel,
+      renderProfilePanel,
+      createAutofillCandidate,
+      findOwnedChoicePopup,
+      findVisibleChoiceOptions,
+      tryFillHierarchicalChoiceOptions,
+      handleContentMessage
     };
   }
 })();

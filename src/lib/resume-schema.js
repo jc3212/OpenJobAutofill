@@ -1,4 +1,4 @@
-﻿/**
+/**
  * OpenJobAutofill - Standard Resume Schema & Passthrough Protocol
  * 
  * Defines the 19 standard first-level sections, enforces schema assertion,
@@ -199,7 +199,7 @@ export function normalizeProfileV2(profileV2) {
     updatedAt: sanitizeText(profileV2.updatedAt || "", 80),
     sections: normalizedSections,
     customSections: Array.isArray(profileV2.customSections)
-      ? profileV2.customSections.map(normalizeCustomSection).filter((s) => Object.keys(s.values).length > 0 || s.custom.length > 0)
+      ? profileV2.customSections.map(normalizeCustomSection).filter((s) => s.kind === "repeat" ? s.items.length > 0 : (Object.keys(s.values).length > 0 || s.custom.length > 0))
       : []
   };
 
@@ -266,6 +266,18 @@ function normalizeRepeatItem(item = {}) {
 }
 
 function normalizeCustomSection(section = {}, index = 0) {
+  const isRepeat = section.kind === "repeat";
+  if (isRepeat) {
+    const items = Array.isArray(section.items)
+      ? section.items.map(normalizeRepeatItem).filter((item) => Object.keys(item.values).length > 0 || item.custom.length > 0)
+      : [];
+    return {
+      key: sanitizeText(section.key || `custom-${index}`, 80),
+      title: sanitizeText(section.title || "自定义资料", 120),
+      kind: "repeat",
+      items
+    };
+  }
   return {
     key: sanitizeText(section.key || `custom-${index}`, 80),
     title: sanitizeText(section.title || "自定义资料", 120),

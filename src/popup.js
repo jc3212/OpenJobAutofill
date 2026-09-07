@@ -321,14 +321,22 @@ async function sendToActiveTab(message) {
     throw new Error("No active tab found.");
   }
 
-  await executeScript(tab.id, "src/content.js");
+  const payloadWithMessageId = {
+    ...message,
+    requestId: message?.requestId || `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+  };
 
   try {
-    return await sendTabMessage(tab.id, message);
+    return await sendTabMessage(tab.id, payloadWithMessageId);
   } catch (firstError) {
+    const isNoReceiver = /(receiving end does not exist|could not establish connection|no receiver|closed)/i.test(firstError?.message || "");
+    if (!isNoReceiver) {
+      throw firstError;
+    }
+
     try {
       await executeScript(tab.id, "src/content.js");
-      return await sendTabMessage(tab.id, message);
+      return await sendTabMessage(tab.id, payloadWithMessageId);
     } catch {
       throw firstError;
     }

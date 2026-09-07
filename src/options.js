@@ -2028,18 +2028,17 @@ function renderProfileSectionEditor(profileV2) {
   const extras = (parsed.customSections || [])
     .map((section, index) => {
       const key = section.key || `extra-${index}`;
+      const isRepeat = section.kind === "repeat";
       return renderStructuredSection(
         {
           key,
-          title: section.title,
-          kind: "simple",
-          fields: [],
+          title: section.title || `自定义模块 ${index + 1}`,
+          kind: isRepeat ? "repeat" : "simple",
+          itemLabel: section.itemLabel || section.title || "记录",
+          fields: section.fields || [],
           isExtra: true
         },
-        {
-          values: section.values || {},
-          custom: section.custom || []
-        }
+        section
       );
     })
     .join("");
@@ -2090,9 +2089,26 @@ function renderStructuredSection(section, data = null) {
 function renderStructuredSimple(section, data = {}) {
   const values = data.values || {};
   const custom = data.custom || [];
+  const knownLabels = new Set((section.fields || []).map((f) => f.label));
+
+  const knownFieldsHtml = (section.fields || []).map((field) => renderStructuredField(field, values[field.label])).join("");
+  const extraFieldsHtml = Object.keys(values)
+    .filter((k) => !knownLabels.has(k) && values[k] !== undefined && values[k] !== null && String(values[k]).trim() !== "")
+    .map((k) => {
+      const field = {
+        key: k,
+        label: k,
+        type: "text",
+        placeholder: "扩展字段"
+      };
+      return renderStructuredField(field, values[k]);
+    })
+    .join("");
+
   return `
     <div class="structured-grid">
-      ${(section.fields || []).map((field) => renderStructuredField(field, values[field.label])).join("")}
+      ${knownFieldsHtml}
+      ${extraFieldsHtml}
     </div>
     ${renderStructuredCustomArea(custom)}
   `;
@@ -2111,6 +2127,23 @@ function renderStructuredRepeater(section, items = []) {
 
 function renderStructuredItem(section, item, index) {
   const title = item?.title || `${section.itemLabel || section.title} ${index + 1}`;
+  const values = item?.values || {};
+  const knownLabels = new Set((section.fields || []).map((f) => f.label));
+
+  const knownFieldsHtml = (section.fields || []).map((field) => renderStructuredField(field, values[field.label])).join("");
+  const extraFieldsHtml = Object.keys(values)
+    .filter((k) => !knownLabels.has(k) && values[k] !== undefined && values[k] !== null && String(values[k]).trim() !== "")
+    .map((k) => {
+      const field = {
+        key: k,
+        label: k,
+        type: "text",
+        placeholder: "扩展字段"
+      };
+      return renderStructuredField(field, values[k]);
+    })
+    .join("");
+
   return `
     <article class="structured-item" data-structured-item>
       <div class="structured-item-head">
@@ -2118,7 +2151,8 @@ function renderStructuredItem(section, item, index) {
         <button class="structured-remove" type="button" data-action="remove-structured-item">删除</button>
       </div>
       <div class="structured-grid">
-        ${(section.fields || []).map((field) => renderStructuredField(field, item?.values?.[field.label])).join("")}
+        ${knownFieldsHtml}
+        ${extraFieldsHtml}
       </div>
       ${renderStructuredCustomArea(item?.custom || [])}
     </article>
@@ -2327,14 +2361,26 @@ function collectProfileV2FromEditor() {
     const title = sectionEl.dataset.sectionTitle || "";
     const config = getStructuredSectionConfig(key);
     const isExtra = sectionEl.dataset.extraSection === "true";
+    const hasRepeater = Boolean(sectionEl.querySelector("[data-structured-repeater]"));
 
-    if (config?.kind === "repeat") {
-      profileV2.sections[key] = {
-        key,
-        title: config.title,
-        kind: "repeat",
-        items: collectStructuredItems(sectionEl, config)
-      };
+    if (config?.kind === "repeat" || (isExtra && hasRepeater)) {
+      const repConfig = config || { key, title, kind: "repeat", itemLabel: title, fields: [] };
+      const items = collectStructuredItems(sectionEl, repConfig);
+      if (config && !isExtra) {
+        profileV2.sections[key] = {
+          key,
+          title: config.title,
+          kind: "repeat",
+          items
+        };
+      } else if (items.length > 0) {
+        customSections.push({
+          key,
+          title: title || "自定义重复项",
+          kind: "repeat",
+          items
+        });
+      }
       return;
     }
 
@@ -2452,15 +2498,85 @@ function parseImportedProfileBackup(text) {
     throw new Error("导入的内容必须是 JSON 对象。");
   }
 
+  if (parsed.version != null) {
+    if (typeof parsed.version !== "number" || parsed.version < 1 || parsed.version > 2) {
+      throw new Error(`不支持的资料备份版本：${parsed.version}。`);
+    }
+  }
+
+  if (parsed.profileV2 != null && !isPlainObject(parsed.profileV2)) {
+    throw new Error("资料备份格式不正确：profileV2 必须是对象。");
+  }
+
+  let candidate = null;
   if (parsed.profileV2 && isPlainObject(parsed.profileV2)) {
-    return normalizeProfileV2(parsed.profileV2);
+    candidate = parsed.profileV2;
+  } else if (parsed.sections && isPlainObject(parsed.sections)) {
+    candidate = parsed;
+  } else {
+    throw new Error("无法识别的简历备份格式，必须包含 profileV2 或 sections 结构。");
   }
 
-  if (parsed.sections && isPlainObject(parsed.sections)) {
-    return normalizeProfileV2(parsed);
+  // Strict structural validation
+  if (!isPlainObject(candidate.sections)) {
+    throw new Error("资料备份格式不正确：sections 必须是对象。");
   }
 
-  throw new Error("无法识别的简历备份格式，必须包含 profileV2 或 sections 结构。");
+  if (candidate.customSections != null && !Array.isArray(candidate.customSections)) {
+    throw new Error("资料备份格式不正确：customSections 必须是数组。");
+  }
+
+  for (const [key, section] of Object.entries(candidate.sections)) {
+    if (!isPlainObject(section)) {
+      throw new Error(`资料备份格式不正确：section '${key}' 必须是对象。`);
+    }
+    if (section.custom != null && !Array.isArray(section.custom)) {
+      throw new Error(`资料备份格式不正确：section '${key}' custom 必须是数组。`);
+    }
+    if (section.kind === "repeat") {
+      if (section.items != null && !Array.isArray(section.items)) {
+        throw new Error(`资料备份格式不正确：repeat section '${key}' items 必须是数组。`);
+      }
+      if (Array.isArray(section.items)) {
+        for (let i = 0; i < section.items.length; i++) {
+          const item = section.items[i];
+          if (!isPlainObject(item)) {
+            throw new Error(`资料备份格式不正确：repeat section '${key}' item ${i + 1} 必须是对象。`);
+          }
+          if (item.values != null && !isPlainObject(item.values)) {
+            throw new Error(`资料备份格式不正确：repeat section '${key}' item ${i + 1} values 必须是对象。`);
+          }
+          if (item.custom != null && !Array.isArray(item.custom)) {
+            throw new Error(`资料备份格式不正确：repeat section '${key}' item ${i + 1} custom 必须是数组。`);
+          }
+        }
+      }
+    } else if (section.kind === "simple") {
+      if (section.values != null && !isPlainObject(section.values)) {
+        throw new Error(`资料备份格式不正确：simple section '${key}' values 必须是对象。`);
+      }
+    }
+  }
+
+  if (Array.isArray(candidate.customSections)) {
+    for (let i = 0; i < candidate.customSections.length; i++) {
+      const extraSec = candidate.customSections[i];
+      if (!isPlainObject(extraSec)) {
+        throw new Error(`资料备份格式不正确：customSection ${i + 1} 必须是对象。`);
+      }
+      if (extraSec.values != null && !isPlainObject(extraSec.values)) {
+        throw new Error(`资料备份格式不正确：customSection ${i + 1} values 必须是对象。`);
+      }
+      if (extraSec.custom != null && !Array.isArray(extraSec.custom)) {
+        throw new Error(`资料备份格式不正确：customSection ${i + 1} custom 必须是数组。`);
+      }
+      if (extraSec.items != null && !Array.isArray(extraSec.items)) {
+        throw new Error(`资料备份格式不正确：customSection ${i + 1} items 必须是数组。`);
+      }
+    }
+  }
+
+  return normalizeProfileV2(candidate);
 }
 
 function updateModeBlocks() {
@@ -2653,3 +2769,12 @@ function escapeHtml(value) {
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
 }
+
+export {
+  parseImportedProfileBackup,
+  renderStructuredSimple,
+  renderStructuredItem,
+  collectProfileV2FromEditor,
+  collectStructuredFieldsFromScope
+};
+
