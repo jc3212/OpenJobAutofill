@@ -21,8 +21,8 @@ export const FIELD_KNOWLEDGE_GRAPH = Object.freeze([
     ],
     negative: [
       "紧急联系人", "紧急联络人", "证明人", "推荐人", "父亲", "母亲", "家长", "监护人", "配偶",
-      "联系人", "主管", "经理", "直属上级", "emergency", "reference", "father", "mother",
-      "parent", "guardian", "spouse", "manager", "supervisor", "referee", "guarantor",
+      "联系人", "主管", "经理", "直属上级", "担保人", "子女", "emergency", "reference", "father", "mother",
+      "parent", "guardian", "spouse", "manager", "supervisor", "referee", "guarantor", "child", "children",
       "first name", "last name", "given name", "family name", "surname"
     ]
   },
@@ -58,7 +58,9 @@ export const FIELD_KNOWLEDGE_GRAPH = Object.freeze([
     aliases: [
       "性别", "生理性别", "性別", "gender", "sex"
     ],
-    negative: []
+    negative: [
+      "紧急联系人", "证明人", "推荐人", "emergency", "reference"
+    ]
   },
   {
     id: "basic.birthDate",
@@ -84,7 +86,9 @@ export const FIELD_KNOWLEDGE_GRAPH = Object.freeze([
     ],
     negative: [
       "紧急联系人", "紧急联络人", "证明人", "推荐人", "家庭电话", "固定电话", "办公电话", "公司电话", "座机", "传真",
-      "emergency", "reference", "father", "mother", "parent", "home phone", "office phone", "work phone", "fax"
+      "父亲", "母亲", "家长", "配偶", "监护人", "子女", "主管", "经理", "直属上级",
+      "emergency", "reference", "referee", "father", "mother", "parent", "guardian", "spouse", "manager", "supervisor",
+      "home phone", "office phone", "work phone", "fax"
     ]
   },
   {
@@ -97,7 +101,9 @@ export const FIELD_KNOWLEDGE_GRAPH = Object.freeze([
       "email", "mail", "e_mail", "email address", "personal email"
     ],
     negative: [
-      "紧急联系人", "证明人", "企业邮箱", "公司邮箱", "推荐人", "emergency", "reference", "referee"
+      "紧急联系人", "紧急联络人", "证明人", "企业邮箱", "公司邮箱", "推荐人",
+      "主管", "经理", "直属上级", "父亲", "母亲", "家长", "配偶", "监护人",
+      "emergency", "reference", "referee", "supervisor", "manager", "father", "mother", "parent", "spouse", "guardian"
     ]
   },
   {
@@ -109,7 +115,10 @@ export const FIELD_KNOWLEDGE_GRAPH = Object.freeze([
       "证件号码", "证件号", "身份证", "身份证号", "身份证号码", "居民身份证号", "身份证件号",
       "id number", "national id", "id card", "identity number", "id no", "identification number", "ssn"
     ],
-    negative: []
+    negative: [
+      "紧急联系人", "紧急联络人", "证明人", "推荐人", "父亲", "母亲", "家长", "配偶", "监护人", "子女",
+      "emergency", "reference", "referee", "father", "mother", "parent", "spouse", "guardian"
+    ]
   },
   {
     id: "basic.politicalStatus",
@@ -119,7 +128,9 @@ export const FIELD_KNOWLEDGE_GRAPH = Object.freeze([
     aliases: [
       "政治面貌", "政治面貌类型", "党派", "党派面貌", "political status", "party"
     ],
-    negative: []
+    negative: [
+      "紧急联系人", "证明人", "推荐人"
+    ]
   },
   {
     id: "basic.maritalStatus",
@@ -129,7 +140,9 @@ export const FIELD_KNOWLEDGE_GRAPH = Object.freeze([
     aliases: [
       "婚姻状况", "婚姻情况", "婚育情况", "婚育状况", "是否已婚", "marital status", "marriage status"
     ],
-    negative: []
+    negative: [
+      "紧急联系人", "证明人", "推荐人"
+    ]
   },
   {
     id: "basic.currentCity",
@@ -192,7 +205,9 @@ export const FIELD_KNOWLEDGE_GRAPH = Object.freeze([
       "最高学历", "最高文化程度", "最高全日制学历", "学历水平", "文化程度",
       "highest degree", "highest education", "highest level of education", "education level", "degree level"
     ],
-    negative: []
+    negative: [
+      "初中", "高中", "中专", "小学", "middle school", "high school"
+    ]
   },
   {
     id: "basic.workYears",
@@ -203,7 +218,9 @@ export const FIELD_KNOWLEDGE_GRAPH = Object.freeze([
       "工作年限", "工作经验", "工龄", "相关工作年限", "工作年资", "经验年限",
       "years of experience", "work experience years", "total experience", "experience"
     ],
-    negative: []
+    negative: [
+      "紧急联系人", "证明人", "emergency", "reference"
+    ]
   },
   {
     id: "basic.emergencyContact",
@@ -215,7 +232,8 @@ export const FIELD_KNOWLEDGE_GRAPH = Object.freeze([
       "emergency contact", "emergency contact name", "in case of emergency", "ice contact"
     ],
     negative: [
-      "证明人", "推荐人", "reference", "referee"
+      "证明人", "推荐人", "电话", "手机", "phone", "mobile", "邮箱", "email",
+      "身份证", "证件号", "id", "passport", "关系", "relation", "reference", "referee"
     ]
   },
   {
@@ -228,7 +246,21 @@ export const FIELD_KNOWLEDGE_GRAPH = Object.freeze([
       "emergency contact phone", "emergency phone", "emergency contact number"
     ],
     negative: [
-      "证明人", "推荐人", "reference", "referee"
+      "证明人", "推荐人", "姓名", "name", "邮箱", "email", "身份证", "证件号", "id",
+      "关系", "relation", "reference", "referee"
+    ]
+  },
+  {
+    id: "basic.emergencyEmail",
+    target: "basic.emergencyEmail",
+    label: "紧急联系人邮箱",
+    sectionScope: "basic",
+    aliases: [
+      "紧急联系人邮箱", "紧急联络人邮箱", "应急联系人邮箱",
+      "emergency contact email", "emergency email", "ice email"
+    ],
+    negative: [
+      "本人", "候选人", "电话", "手机", "phone", "关系", "relation"
     ]
   },
   {
@@ -397,7 +429,7 @@ export const FIELD_KNOWLEDGE_GRAPH = Object.freeze([
       "company", "company name", "employer", "organization", "workplace", "firm"
     ],
     negative: [
-      "学校", "大学", "证明人", "院校", "school", "university", "college", "reference"
+      "学校", "大学", "证明人", "推荐人", "院校", "意向", "期望", "school", "university", "college", "reference", "referee", "desired", "target"
     ]
   },
   {
@@ -410,7 +442,8 @@ export const FIELD_KNOWLEDGE_GRAPH = Object.freeze([
       "title", "job title", "role", "position", "designation", "job role"
     ],
     negative: [
-      "学校", "证明人职位", "证明人", "意向", "期望", "school", "reference", "emergency", "desired"
+      "学校", "证明人职位", "证明人职务", "推荐人职位", "证明人", "推荐人", "主管", "经理", "直属上级", "领导", "意向", "期望",
+      "school", "reference", "referee", "emergency", "supervisor", "manager", "desired"
     ]
   },
   {
@@ -487,7 +520,9 @@ export const FIELD_KNOWLEDGE_GRAPH = Object.freeze([
       "离职原因", "离开原因", "离职缘由", "离职说明",
       "reason for leaving", "departure reason"
     ],
-    negative: []
+    negative: [
+      "期望", "意向", "目标", "expected", "desired"
+    ]
   },
   {
     id: "work.referenceName",
@@ -499,7 +534,8 @@ export const FIELD_KNOWLEDGE_GRAPH = Object.freeze([
       "reference name", "referee", "reference", "supervisor name", "referee name"
     ],
     negative: [
-      "本人", "候选人", "申请人", "applicant", "candidate", "yourself"
+      "本人", "候选人", "申请人", "邮箱", "email", "电话", "手机", "phone", "mobile",
+      "职位", "职务", "title", "role", "applicant", "candidate", "yourself"
     ]
   },
   {
@@ -512,7 +548,7 @@ export const FIELD_KNOWLEDGE_GRAPH = Object.freeze([
       "reference phone", "referee phone", "reference contact", "supervisor phone"
     ],
     negative: [
-      "本人电话", "candidate phone"
+      "本人电话", "candidate phone", "姓名", "name", "邮箱", "email", "职位", "职务", "title", "role"
     ]
   },
   {
@@ -524,7 +560,22 @@ export const FIELD_KNOWLEDGE_GRAPH = Object.freeze([
       "证明人职位", "证明人职务", "推荐人职位", "上级职位",
       "reference title", "reference position", "supervisor title"
     ],
-    negative: []
+    negative: [
+      "本人", "候选人", "申请人", "姓名", "name", "邮箱", "email", "电话", "手机", "phone", "applicant", "candidate"
+    ]
+  },
+  {
+    id: "work.referenceEmail",
+    target: "work.referenceEmail",
+    label: "证明人邮箱",
+    sectionScope: "work",
+    aliases: [
+      "证明人邮箱", "证明人电子信箱", "推荐人邮箱", "推荐人电子信箱", "背调邮箱", "上级邮箱",
+      "reference email", "referee email", "supervisor email"
+    ],
+    negative: [
+      "本人", "候选人", "申请人", "电话", "手机", "phone", "applicant", "candidate"
+    ]
   },
 
   // ==========================================

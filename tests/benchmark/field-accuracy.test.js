@@ -135,10 +135,12 @@ const NEGATIVE_GROUND_TRUTH = {
   // Moka
   "iceName": "basic.emergencyContact", // Must not match basic.name
   "icePhone": "basic.emergencyPhone", // Must not match basic.phone
-  "fatherName": "basic.emergencyContact", // Must not match basic.name
-  "motherName": "basic.emergencyContact", // Must not match basic.name
+  "fatherName": "rejected", // Must not match basic.name
+  "fatherPhone": "rejected", // Must not match basic.phone
+  "motherName": "rejected", // Must not match basic.name
   "refName": "work.referenceName", // Must not match basic.name
-  "refPhone": "work.referencePhone" // Must not match basic.phone
+  "refPhone": "work.referencePhone", // Must not match basic.phone
+  "refEmail": "work.referenceEmail" // Must not match basic.email
 };
 
 // Positive ground truth mappings
@@ -225,14 +227,16 @@ const POSITIVE_GROUND_TRUTH = {
   "targetSalary": "basic.expectedSalary"
 };
 
-// Candidate personal basic targets that must NEVER receive negative fields
-const PERSONAL_BASIC_TARGETS = new Set([
+// Candidate personal basic & self targets that must NEVER receive negative fields
+const CANDIDATE_SELF_TARGETS = new Set([
   "basic.name",
   "basic.firstName",
   "basic.lastName",
   "basic.phone",
   "basic.email",
-  "basic.idNumber"
+  "basic.idNumber",
+  "work.role",
+  "work.company"
 ]);
 
 async function runAtsBenchmark() {
@@ -269,10 +273,10 @@ async function runAtsBenchmark() {
       // 1. Evaluate Negative Keyword Exclusion
       if (isNegativeField) {
         negativeAttempts += 1;
-        // Check if erroneously matched candidate personal info
-        if (matchResult.matched && PERSONAL_BASIC_TARGETS.has(matchResult.target)) {
+        // Check if erroneously matched candidate personal info or self experience targets
+        if (matchResult.matched && CANDIDATE_SELF_TARGETS.has(matchResult.target)) {
           negativeViolations += 1;
-          console.error(`  ❌ VIOLATION: Negative field '${key}' (label: "${desc.label}") erroneously matched personal target '${matchResult.target}'!`);
+          console.error(`  ❌ VIOLATION: Negative field '${key}' (label: "${desc.label}") erroneously matched candidate target '${matchResult.target}'!`);
         } else {
           console.log(`  ✔ Negative excluded: '${key}' ("${desc.label}") => not candidate personal info (${matchResult.target || "rejected"})`);
         }

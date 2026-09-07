@@ -155,6 +155,33 @@ console.log("3. Testing 100% Negative Exclusion (Preventing Misattribution)...")
   });
   assert.notEqual(fatherName.target, "basic.name", "Father's name must NOT match candidate basic.name");
 
+  // Candidate phone vs Family Phone (Father/Mother/Spouse)
+  const fatherPhone = matchFieldKnowledge({ label: "父亲电话" });
+  assert.notEqual(fatherPhone.target, "basic.phone", "Father's phone must NOT match candidate basic.phone");
+  const motherPhone = matchFieldKnowledge({ label: "母亲手机" });
+  assert.notEqual(motherPhone.target, "basic.phone", "Mother's phone must NOT match candidate basic.phone");
+  const spousePhone = matchFieldKnowledge({ label: "配偶电话" });
+  assert.notEqual(spousePhone.target, "basic.phone", "Spouse phone must NOT match candidate basic.phone");
+
+  // Candidate email vs Family / Supervisor Email
+  const fatherEmail = matchFieldKnowledge({ label: "父亲邮箱" });
+  assert.notEqual(fatherEmail.target, "basic.email", "Father's email must NOT match candidate basic.email");
+  const supEmail = matchFieldKnowledge({ label: "主管邮箱" });
+  assert.notEqual(supEmail.target, "basic.email", "Supervisor email must NOT match candidate basic.email");
+
+  // Reference email vs Reference Name
+  const refEmail = matchFieldKnowledge({ label: "证明人邮箱" });
+  assert.equal(refEmail.target, "work.referenceEmail", "Reference email must match work.referenceEmail, not referenceName");
+
+  // Candidate work role vs Supervisor Role
+  const supervisorRole = matchFieldKnowledge({ label: "主管职位" });
+  assert.notEqual(supervisorRole.target, "work.role", "Supervisor title must NOT match candidate work.role");
+
+  // Candidate ID card vs Emergency contact ID
+  const emergencyId = matchFieldKnowledge({ label: "紧急联系人身份证号" });
+  assert.notEqual(emergencyId.target, "basic.idNumber", "Emergency ID must NOT match candidate basic.idNumber");
+  assert.notEqual(emergencyId.target, "basic.emergencyContact", "Emergency ID must NOT match emergencyContact name");
+
   console.log("  ✔ 100% Negative keyword exclusion verified (Emergency, Reference, Family, Manager blocked)");
 }
 

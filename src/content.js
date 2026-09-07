@@ -1184,10 +1184,17 @@
       return false;
     }
 
-    element.scrollIntoView({ block: "center", inline: "nearest" });
-    element.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window }));
-    element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, view: window }));
-    element.click();
+    try {
+      element.scrollIntoView?.({ block: "center", inline: "nearest" });
+    } catch {}
+    const MouseEvt = typeof MouseEvent !== "undefined" ? MouseEvent : CustomEvent;
+    try {
+      element.dispatchEvent(new MouseEvt("mousedown", { bubbles: true, cancelable: true, view: typeof window !== "undefined" ? window : null }));
+      element.dispatchEvent(new MouseEvt("mouseup", { bubbles: true, cancelable: true, view: typeof window !== "undefined" ? window : null }));
+    } catch {}
+    if (typeof element.click === "function") {
+      element.click();
+    }
     return true;
   }
 
@@ -4790,28 +4797,70 @@
     if (entry.category === "基本信息") {
       const entryLabel = String(entry.label || "");
       if (/姓名|真实姓名/.test(entryLabel) && !/紧急|证明|推荐|关系/.test(entryLabel)) {
-        if (/(?:紧急联系人|紧急联络人|证明人|推荐人|父亲|母亲|家长|监护人|配偶|直属上级|emergency|reference|father|mother|parent|guardian|spouse|referee)/i.test(combinedContext)) {
+        if (/(?:紧急联系人|紧急联络人|证明人|推荐人|父亲|母亲|家长|监护人|配偶|担保人|子女|直属上级|主管|经理|emergency|reference|referee|father|mother|parent|guardian|spouse|guarantor|child|manager|supervisor)/i.test(combinedContext)) {
           return true;
         }
       }
       if (/电话|手机/.test(entryLabel) && !/紧急|证明|推荐/.test(entryLabel)) {
-        if (/(?:紧急联系人|紧急联络人|证明人|推荐人|家庭电话|固定电话|办公电话|公司电话|座机|传真|emergency|reference|home phone|office phone|work phone|fax)/i.test(combinedContext)) {
+        if (/(?:紧急联系人|紧急联络人|证明人|推荐人|家庭电话|固定电话|办公电话|公司电话|座机|传真|父亲|母亲|家长|监护人|配偶|子女|主管|经理|emergency|reference|referee|father|mother|parent|guardian|spouse|manager|supervisor|home phone|office phone|work phone|fax)/i.test(combinedContext)) {
           return true;
         }
       }
       if (/邮箱|email/i.test(entryLabel) && !/紧急|证明/.test(entryLabel)) {
-        if (/(?:紧急联系人|证明人|企业邮箱|公司邮箱|emergency|reference)/i.test(combinedContext)) {
+        if (/(?:紧急联系人|紧急联络人|证明人|推荐人|企业邮箱|公司邮箱|主管|经理|直属上级|父亲|母亲|家长|配偶|监护人|emergency|reference|referee|supervisor|manager|father|mother|parent|spouse|guardian)/i.test(combinedContext)) {
+          return true;
+        }
+      }
+      if (/身份证|证件号/i.test(entryLabel)) {
+        if (/(?:紧急联系人|紧急联络人|证明人|推荐人|父亲|母亲|家长|配偶|监护人|子女|emergency|reference|referee|father|mother|parent|spouse|guardian)/i.test(combinedContext)) {
           return true;
         }
       }
     }
 
-    // 2. Repeater item isolation: Candidate personal basic info must not fill into experience cards
+    // 2. Negative rules for work experience / internship entries:
+    if (entry.category === "工作经历" || entry.category === "实习经历") {
+      const entryLabel = String(entry.label || "");
+      if (/职位|职务|岗位/.test(entryLabel)) {
+        if (/(?:主管|经理|直属上级|直属领导|领导|证明人职位|证明人职务|推荐人职位|证明人|推荐人|supervisor|manager|reference|referee)/i.test(combinedContext)) {
+          return true;
+        }
+      }
+      if (/公司|单位/.test(entryLabel)) {
+        if (/(?:证明人|推荐人|学校|院校|意向|期望|reference|referee|school|university|desired|target)/i.test(combinedContext)) {
+          return true;
+        }
+      }
+    }
+
+    // 3. Repeater item isolation: Candidate personal basic info must not fill into experience cards
     if (field.isRepeaterItem && entry.category === "基本信息" && !/紧急|证明/.test(entry.label || "")) {
       return true;
     }
 
-    // 3. Strict paragraph / repeaterIndex isolation:
+    // 4. Cross-section scope isolation based on inferred sectionHeading:
+    const heading = String(field.sectionHeading || field.section || "").toLowerCase();
+    if (heading) {
+      const isEduHeading = /教育|学历|学业|学校|毕业|education|degree|academic/i.test(heading);
+      const isWorkHeading = /工作|实习|履历|职业|就职|work|employment|experience|job/i.test(heading) && !/在校|社团/.test(heading);
+      const isProjectHeading = /项目|project/i.test(heading);
+      const isBasicHeading = /基本|个人信息|个人资料|联系方式|basic|personal|contact/i.test(heading);
+
+      if (isEduHeading && (entry.category === "工作经历" || entry.category === "项目经历")) {
+        return true;
+      }
+      if (isWorkHeading && (entry.category === "教育经历" || entry.category === "项目经历")) {
+        return true;
+      }
+      if (isProjectHeading && (entry.category === "教育经历" || entry.category === "工作经历")) {
+        return true;
+      }
+      if (isBasicHeading && field.isRepeaterItem && entry.category !== "基本信息") {
+        return true;
+      }
+    }
+
+    // 5. Strict paragraph / repeaterIndex isolation:
     if (field.isRepeaterItem && Number(field.repeaterIndex) >= 0) {
       let entryIndex = -1;
       if (entry.prefix) {
@@ -5891,19 +5940,31 @@
         return choiceResult;
       }
 
+      let wroteInnerInput = false;
       const textInput = element.querySelector?.('input:not([type="hidden"]),textarea,[contenteditable="true"]');
       if (textInput && textInput !== element) {
         setNativeValue(textInput, value);
-        return { ok: true, warning: "combobox fallback wrote into inner input only" };
+        wroteInnerInput = true;
       }
 
       const virtualDisplay = element.querySelector?.(
-        '.ant-select-selection-item, .el-select__selected-item, .arco-select-view-value, [class*="selection-item"], [class*="select-value"], [class*="selected-item"]'
+        '.ant-select-selection-item, .el-select__selected-item, .arco-select-view-value, [class*="selection-item"], [class*="select-value"], [class*="selected-item"], [class*="selection-search-input"]'
       );
       if (virtualDisplay) {
-        virtualDisplay.textContent = String(value);
+        if (virtualDisplay.tagName === "INPUT" || virtualDisplay.tagName === "TEXTAREA") {
+          setNativeValue(virtualDisplay, value);
+        } else {
+          virtualDisplay.textContent = String(value);
+        }
+        element.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
         element.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
-        return { ok: true, warning: "combobox virtual display updated" };
+        return { ok: true, warning: wroteInnerInput ? "combobox virtual display and inner input updated" : "combobox virtual display updated" };
+      }
+
+      if (wroteInnerInput) {
+        element.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+        element.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+        return { ok: true, warning: "combobox fallback wrote into inner input only" };
       }
     }
 
@@ -5944,7 +6005,7 @@
     }
 
     const role = element.getAttribute("role");
-    if (role === "radio" || role === "checkbox") {
+    if (role === "radio" || role === "checkbox" || role === "combobox" || element.matches?.('[role="combobox"]')) {
       return element;
     }
 
@@ -6107,7 +6168,9 @@
       return { ok: false, reason: "no choice container found" };
     }
 
-    container.scrollIntoView({ block: "center", inline: "nearest" });
+    try {
+      container.scrollIntoView?.({ block: "center", inline: "nearest" });
+    } catch {}
     clickActionElement(element instanceof Element ? element : container);
     if (container !== element) {
       clickActionElement(container);
@@ -6555,17 +6618,26 @@
   function setNativeValue(element, value) {
     const stringValue = value == null ? "" : String(value);
 
-    // 1. Dispatch Focus
+    // 1. Dispatch Focus (ensuring exactly one focus event)
+    let focusFired = false;
+    const onFocus = () => { focusFired = true; };
     try {
+      element.addEventListener?.("focus", onFocus, { once: true });
       if (typeof element.focus === "function") {
         element.focus();
       }
     } catch {}
     try {
-      const FocusEvt = typeof FocusEvent !== "undefined" ? FocusEvent : CustomEvent;
-      element.dispatchEvent(new FocusEvt("focus", { bubbles: true, composed: true }));
-    } catch {
-      element.dispatchEvent(new Event("focus", { bubbles: true, composed: true }));
+      element.removeEventListener?.("focus", onFocus);
+    } catch {}
+
+    if (!focusFired) {
+      try {
+        const FocusEvt = typeof FocusEvent !== "undefined" ? FocusEvent : CustomEvent;
+        element.dispatchEvent(new FocusEvt("focus", { bubbles: true, composed: true }));
+      } catch {
+        element.dispatchEvent(new Event("focus", { bubbles: true, composed: true }));
+      }
     }
 
     // 2. React 16+ _valueTracker bypass & reset
@@ -6626,17 +6698,26 @@
       element.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
     } catch {}
 
-    // 6. Dispatch Blur
+    // 6. Dispatch Blur (ensuring exactly one blur event)
+    let blurFired = false;
+    const onBlur = () => { blurFired = true; };
     try {
+      element.addEventListener?.("blur", onBlur, { once: true });
       if (typeof element.blur === "function") {
         element.blur();
       }
     } catch {}
     try {
-      const FocusEvt = typeof FocusEvent !== "undefined" ? FocusEvent : CustomEvent;
-      element.dispatchEvent(new FocusEvt("blur", { bubbles: true, composed: true }));
-    } catch {
-      element.dispatchEvent(new Event("blur", { bubbles: true, composed: true }));
+      element.removeEventListener?.("blur", onBlur);
+    } catch {}
+
+    if (!blurFired) {
+      try {
+        const FocusEvt = typeof FocusEvent !== "undefined" ? FocusEvent : CustomEvent;
+        element.dispatchEvent(new FocusEvt("blur", { bubbles: true, composed: true }));
+      } catch {
+        element.dispatchEvent(new Event("blur", { bubbles: true, composed: true }));
+      }
     }
   }
 
@@ -6646,20 +6727,38 @@
       const group = element.name ? Array.from(document.querySelectorAll(`input[type="radio"][name="${CSS.escape(element.name)}"]`)) : [element];
       const matched = group.find((radio) => choiceTextMatches(getChoiceLabelText(radio), target) || choiceTextMatches(radio.value || "", target));
       if (matched) {
+        let focusFired = false;
+        const onFocus = () => { focusFired = true; };
         try {
+          matched.addEventListener?.("focus", onFocus, { once: true });
           matched.focus?.();
-          matched.dispatchEvent(new Event("focus", { bubbles: true, composed: true }));
+          matched.removeEventListener?.("focus", onFocus);
         } catch {}
+        if (!focusFired) {
+          try {
+            matched.dispatchEvent(new Event("focus", { bubbles: true, composed: true }));
+          } catch {}
+        }
+
         if (matched._valueTracker && typeof matched._valueTracker.setValue === "function") {
           matched._valueTracker.setValue(false);
         }
         matched.click();
         matched.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
         matched.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+
+        let blurFired = false;
+        const onBlur = () => { blurFired = true; };
         try {
+          matched.addEventListener?.("blur", onBlur, { once: true });
           matched.blur?.();
-          matched.dispatchEvent(new Event("blur", { bubbles: true, composed: true }));
+          matched.removeEventListener?.("blur", onBlur);
         } catch {}
+        if (!blurFired) {
+          try {
+            matched.dispatchEvent(new Event("blur", { bubbles: true, composed: true }));
+          } catch {}
+        }
       }
       return;
     }
@@ -6667,10 +6766,18 @@
     const normalized = String(value).trim().toLowerCase();
     const shouldCheck = ["true", "yes", "是", "1", "checked", "on"].includes(normalized);
 
+    let focusFired = false;
+    const onFocus = () => { focusFired = true; };
     try {
+      element.addEventListener?.("focus", onFocus, { once: true });
       element.focus?.();
-      element.dispatchEvent(new Event("focus", { bubbles: true, composed: true }));
+      element.removeEventListener?.("focus", onFocus);
     } catch {}
+    if (!focusFired) {
+      try {
+        element.dispatchEvent(new Event("focus", { bubbles: true, composed: true }));
+      } catch {}
+    }
 
     if (element._valueTracker && typeof element._valueTracker.setValue === "function") {
       element._valueTracker.setValue(!shouldCheck);
@@ -6686,10 +6793,18 @@
     element.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
     element.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
 
+    let blurFired = false;
+    const onBlur = () => { blurFired = true; };
     try {
+      element.addEventListener?.("blur", onBlur, { once: true });
       element.blur?.();
-      element.dispatchEvent(new Event("blur", { bubbles: true, composed: true }));
+      element.removeEventListener?.("blur", onBlur);
     } catch {}
+    if (!blurFired) {
+      try {
+        element.dispatchEvent(new Event("blur", { bubbles: true, composed: true }));
+      } catch {}
+    }
   }
 
   function setSelectValue(element, value) {
@@ -6718,11 +6833,15 @@
   }
 
   function setContentEditableValue(element, value) {
-    element.focus();
+    try {
+      element.focus?.();
+    } catch {}
     element.textContent = value == null ? "" : String(value);
-    element.dispatchEvent(new Event("input", { bubbles: true }));
-    element.dispatchEvent(new Event("change", { bubbles: true }));
-    element.dispatchEvent(new Event("blur", { bubbles: true }));
+    element.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+    element.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+    try {
+      element.blur?.();
+    } catch {}
   }
 
   function findElementByCssPath(cssPath) {
@@ -6920,9 +7039,26 @@
     return true;
   };
 
-  if (window.__OJAF_AUTOFILL_MESSAGE_HANDLER__) {
-    chrome.runtime.onMessage.removeListener(window.__OJAF_AUTOFILL_MESSAGE_HANDLER__);
+  if (typeof chrome !== "undefined" && chrome.runtime?.onMessage?.addListener) {
+    if (window.__OJAF_AUTOFILL_MESSAGE_HANDLER__) {
+      chrome.runtime.onMessage.removeListener(window.__OJAF_AUTOFILL_MESSAGE_HANDLER__);
+    }
+    window.__OJAF_AUTOFILL_MESSAGE_HANDLER__ = messageHandler;
+    chrome.runtime.onMessage.addListener(messageHandler);
   }
-  window.__OJAF_AUTOFILL_MESSAGE_HANDLER__ = messageHandler;
-  chrome.runtime.onMessage.addListener(messageHandler);
+
+  if (typeof globalThis !== "undefined") {
+    globalThis.__OJAF_TEST_EXPORTS__ = {
+      setNativeValue,
+      setCheckboxOrRadio,
+      setSelectValue,
+      setContentEditableValue,
+      fillElementSmart,
+      inferSectionHeading,
+      getRepeaterIndex,
+      isCandidateExcludedByFkgNegativeOrScope,
+      buildFieldMeta,
+      scoreAutofillCandidate
+    };
+  }
 })();

@@ -6,7 +6,10 @@
  * and non-native combobox / virtual input compatibility.
  */
 
+import fs from "node:fs";
+import vm from "node:vm";
 import assert from "node:assert/strict";
+import { createMockChrome } from "../mock-chrome.js";
 
 console.log("=== Running Unit Test: Universal Framework Filler Gate ===");
 
@@ -21,11 +24,6 @@ class MockEvent {
   }
 }
 
-globalThis.Event = MockEvent;
-globalThis.CustomEvent = MockEvent;
-globalThis.FocusEvent = MockEvent;
-globalThis.InputEvent = MockEvent;
-
 class MockElement {
   constructor(tagName = "input", attrs = {}) {
     this.tagName = tagName.toUpperCase();
@@ -35,6 +33,10 @@ class MockElement {
     this._value = "";
     this._checked = false;
     this.disabled = false;
+    this.children = [];
+    this.parentElement = null;
+    this.isContentEditable = false;
+    this.textContent = "";
   }
 
   getAttribute(name) {
@@ -50,8 +52,13 @@ class MockElement {
     this._listeners[type].push(fn);
   }
 
+  removeEventListener(type, fn) {
+    if (!this._listeners[type]) return;
+    this._listeners[type] = this._listeners[type].filter((f) => f !== fn);
+  }
+
   dispatchEvent(event) {
-    const list = this._listeners[event.type] || [];
+    const list = (this._listeners[event.type] || []).slice();
     for (const fn of list) {
       fn(event);
     }
@@ -66,7 +73,21 @@ class MockElement {
     this.dispatchEvent(new MockEvent("blur", { bubbles: true, composed: true }));
   }
 
+  click() {
+    this.dispatchEvent(new MockEvent("click", { bubbles: true, composed: true }));
+  }
+
+  scrollIntoView() {}
+
   querySelector() {
+    return null;
+  }
+
+  querySelectorAll() {
+    return [];
+  }
+
+  closest() {
     return null;
   }
 }
@@ -94,98 +115,56 @@ class MockHTMLInputElement extends MockElement {
   }
 }
 
-globalThis.HTMLInputElement = MockHTMLInputElement;
-globalThis.HTMLTextAreaElement = class extends MockElement {};
-globalThis.HTMLSelectElement = class extends MockElement {};
+  const mockChrome = createMockChrome();
+  mockChrome.runtime.sendMessage = (msg, cb) => {
+    if (typeof cb === "function") cb({ ok: true, data: {} });
+    return Promise.resolve({ ok: true, data: {} });
+  };
 
-// 2. Import / Simulate Filler logic from content.js
-function setNativeValue(element, value) {
-  const stringValue = value == null ? "" : String(value);
+  const sandbox = {
+    window: {},
+    location: { hostname: "example.com", href: "https://example.com" },
+    document: {
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      querySelectorAll: () => [],
+      querySelector: () => null,
+      getElementById: () => null,
+      createElement: (tag) => new MockElement(tag),
+      head: { appendChild: () => {} },
+      body: { appendChild: () => {} },
+      documentElement: new MockElement("html")
+    },
+    chrome: mockChrome,
+  Event: MockEvent,
+  CustomEvent: MockEvent,
+  FocusEvent: MockEvent,
+  InputEvent: MockEvent,
+  MouseEvent: MockEvent,
+  Element: MockElement,
+  Node: { ELEMENT_NODE: 1 },
+  HTMLInputElement: MockHTMLInputElement,
+  HTMLTextAreaElement: class extends MockElement {},
+  HTMLSelectElement: class extends MockElement {},
+  console,
+  setTimeout,
+  clearTimeout,
+  setInterval,
+  clearInterval
+};
+sandbox.window = sandbox;
+sandbox.globalThis = sandbox;
 
-  // 1. Dispatch Focus
-  try {
-    if (typeof element.focus === "function") {
-      element.focus();
-    }
-  } catch {}
-  try {
-    const FocusEvt = typeof FocusEvent !== "undefined" ? FocusEvent : CustomEvent;
-    element.dispatchEvent(new FocusEvt("focus", { bubbles: true, composed: true }));
-  } catch {
-    element.dispatchEvent(new Event("focus", { bubbles: true, composed: true }));
-  }
+const contentCode = fs.readFileSync("src/content.js", "utf8");
+vm.createContext(sandbox);
+vm.runInContext(contentCode, sandbox);
 
-  // 2. React 16+ _valueTracker bypass & reset
-  try {
-    const tracker = element._valueTracker;
-    if (tracker && typeof tracker.setValue === "function") {
-      tracker.setValue(stringValue === "" ? "__ojaf_reset__" : "");
-    }
-  } catch {}
-
-  // 3. Prototype setter execution
-  let prototype = null;
-  if (element instanceof HTMLTextAreaElement) {
-    prototype = HTMLTextAreaElement.prototype;
-  } else if (element instanceof HTMLSelectElement) {
-    prototype = HTMLSelectElement.prototype;
-  } else if (element instanceof HTMLInputElement) {
-    prototype = HTMLInputElement.prototype;
-  } else if (element && typeof element === "object") {
-    prototype = Object.getPrototypeOf(element);
-  }
-
-  let descriptor = null;
-  let proto = prototype;
-  while (proto) {
-    const desc = Object.getOwnPropertyDescriptor(proto, "value");
-    if (desc && (desc.set || desc.get)) {
-      descriptor = desc;
-      break;
-    }
-    proto = Object.getPrototypeOf(proto);
-  }
-
-  if (descriptor && descriptor.set) {
-    descriptor.set.call(element, stringValue);
-  } else {
-    element.value = stringValue;
-  }
-
-  if (element.setAttribute && (element instanceof HTMLInputElement || element.tagName === "INPUT")) {
-    try {
-      element.setAttribute("value", stringValue);
-    } catch {}
-  }
-
-  // 4. Input event with composed: true
-  try {
-    const inputEvt = typeof InputEvent !== "undefined"
-      ? new InputEvent("input", { bubbles: true, cancelable: true, composed: true, data: stringValue, inputType: "insertText" })
-      : new Event("input", { bubbles: true, composed: true });
-    element.dispatchEvent(inputEvt);
-  } catch {
-    element.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
-  }
-
-  // 5. Change event with composed: true
-  try {
-    element.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
-  } catch {}
-
-  // 6. Dispatch Blur
-  try {
-    if (typeof element.blur === "function") {
-      element.blur();
-    }
-  } catch {}
-  try {
-    const FocusEvt = typeof FocusEvent !== "undefined" ? FocusEvent : CustomEvent;
-    element.dispatchEvent(new FocusEvt("blur", { bubbles: true, composed: true }));
-  } catch {
-    element.dispatchEvent(new Event("blur", { bubbles: true, composed: true }));
-  }
-}
+const exports = sandbox.__OJAF_TEST_EXPORTS__;
+assert.ok(exports, "src/content.js must expose __OJAF_TEST_EXPORTS__");
+const { setNativeValue, setCheckboxOrRadio, fillElementSmart } = exports;
+assert.ok(typeof setNativeValue === "function", "setNativeValue must be exported");
+assert.ok(typeof setCheckboxOrRadio === "function", "setCheckboxOrRadio must be exported");
+assert.ok(typeof fillElementSmart === "function", "fillElementSmart must be exported");
 
 // ==========================================
 // Tests
@@ -234,47 +213,73 @@ console.log("2. Testing Complete Event Chain (Focus -> Setter -> Input(composed)
 
   setNativeValue(input, "New Content");
 
-  const eventTypes = eventsFired.map(e => e.type);
+  const eventTypes = eventsFired.map((e) => e.type);
   assert.deepEqual(
     eventTypes,
-    ["focus", "focus", "input", "change", "blur", "blur"],
-    "Must fire complete event sequence"
+    ["focus", "input", "change", "blur"],
+    "Must fire exact clean event sequence without duplicate focus or blur"
   );
 
-  const inputEvent = eventsFired.find(e => e.type === "input");
+  const inputEvent = eventsFired.find((e) => e.type === "input");
   assert.equal(inputEvent.composed, true, "Input event must have composed: true");
   assert.equal(inputEvent.value, "New Content", "Value must be set before input event fires");
 
-  const changeEvent = eventsFired.find(e => e.type === "change");
+  const changeEvent = eventsFired.find((e) => e.type === "change");
   assert.equal(changeEvent.composed, true, "Change event must have composed: true");
 
-  console.log("  ✔ Complete event dispatch chain verified with composed: true");
+  console.log("  ✔ Complete clean event dispatch chain verified with composed: true");
 }
 
-console.log("3. Testing Combobox & Non-native Virtual Input Fallback...");
+console.log("3. Testing Checkbox & Radio _valueTracker and Setter...");
+{
+  const checkbox = new MockHTMLInputElement({ type: "checkbox" });
+  let trackerValue = false;
+  checkbox._valueTracker = {
+    getValue: () => trackerValue,
+    setValue: (val) => {
+      trackerValue = val;
+    }
+  };
+
+  const cbEvents = [];
+  checkbox.addEventListener("change", (e) => cbEvents.push({ type: "change", composed: e.composed, checked: checkbox.checked }));
+
+  setCheckboxOrRadio(checkbox, "true");
+  assert.equal(checkbox.checked, true, "Checkbox should be checked");
+  assert.equal(cbEvents.length, 1, "Change event should fire");
+  assert.equal(cbEvents[0].composed, true, "Change event must be composed: true");
+
+  console.log("  ✔ Checkbox and radio tracker bypass verified");
+}
+
+console.log("4. Testing Combobox & Non-native Virtual Input Fallback via fillElementSmart...");
 {
   const comboboxContainer = new MockElement("div", { role: "combobox" });
   const virtualItem = new MockElement("span", { class: "ant-select-selection-item" });
-  virtualItem.textContent = "Please Select";
-  
+  virtualItem.textContent = "请选择";
+
+  const searchInput = new MockHTMLInputElement({ type: "text", class: "ant-select-selection-search-input" });
+  searchInput.value = "";
+
   comboboxContainer.querySelector = (sel) => {
     if (sel.includes("selection-item")) return virtualItem;
+    if (sel.includes("input")) return searchInput;
     return null;
   };
 
   let changeFired = false;
-  comboboxContainer.addEventListener("change", () => {
+  comboboxContainer.addEventListener("change", (e) => {
     changeFired = true;
+    assert.equal(e.composed, true, "Combobox change event must be composed");
   });
 
-  // Emulate virtual display update logic from fillElementSmart
-  const target = comboboxContainer.querySelector(".ant-select-selection-item");
-  target.textContent = "硕士研究生";
-  comboboxContainer.dispatchEvent(new MockEvent("change", { bubbles: true, composed: true }));
+  const fillResult = await fillElementSmart(comboboxContainer, "硕士研究生", { type: "combobox" }, { writeMode: "direct" });
 
-  assert.equal(virtualItem.textContent, "硕士研究生");
-  assert.equal(changeFired, true);
-  console.log("  ✔ Combobox virtual display update and event propagation verified");
+  assert.equal(fillResult.ok, true, "Combobox filling should succeed");
+  assert.equal(virtualItem.textContent, "硕士研究生", "Virtual display text must be updated");
+  assert.equal(searchInput.value, "硕士研究生", "Inner search input must be updated");
+  assert.equal(changeFired, true, "Combobox change event must have fired");
+  console.log("  ✔ Combobox virtual display and inner input update verified via fillElementSmart");
 }
 
 console.log("✅ Universal Framework Filler tests passed!\n");
