@@ -1973,6 +1973,82 @@
     return true;
   }
 
+  function inferSectionHeading(element) {
+    if (!element || !(element instanceof Element)) {
+      return "";
+    }
+
+    const directFieldset = element.closest("fieldset");
+    if (directFieldset) {
+      const legend = directFieldset.querySelector("legend");
+      if (legend) {
+        const text = getElementText(legend);
+        if (text) return normalizeText(text, 120);
+      }
+    }
+
+    let current = element.parentElement;
+    for (let depth = 0; current && depth < 4; depth += 1, current = current.parentElement) {
+      if (current.closest?.(`#${PANEL_ID}`)) {
+        break;
+      }
+
+      if (current.tagName === "FIELDSET") {
+        const legend = current.querySelector("legend");
+        if (legend) {
+          const text = getElementText(legend);
+          if (text) return normalizeText(text, 120);
+        }
+      }
+
+      const isContainer = current.matches?.(
+        "fieldset, [class*='card'], [class*='module'], [class*='section'], [class*='block'], [class*='group'], [role='region'], [role='group']"
+      );
+
+      if (isContainer) {
+        const headingEl = current.querySelector(
+          "legend, h1, h2, h3, h4, [class*='title'], [class*='header'], [role='heading']"
+        );
+        if (headingEl && headingEl !== element && !headingEl.contains(element)) {
+          const text = getElementText(headingEl);
+          if (text && text.length <= 120) {
+            return normalizeText(text, 120);
+          }
+        }
+      }
+
+      let prev = current.previousElementSibling;
+      for (let s = 0; prev && s < 3; s += 1, prev = prev.previousElementSibling) {
+        if (/^H[1-4]$/i.test(prev.tagName) || prev.matches?.("[class*='title'], [class*='header'], legend, [role='heading']")) {
+          const text = getElementText(prev);
+          if (text && text.length <= 120) {
+            return normalizeText(text, 120);
+          }
+        }
+      }
+    }
+
+    return "";
+  }
+
+  function getRepeaterIndex(element, repeatRoot) {
+    if (!repeatRoot || !repeatRoot.parentElement) {
+      return 0;
+    }
+    const parent = repeatRoot.parentElement;
+    const siblings = Array.from(parent.children).filter((child) => {
+      if (child.tagName !== repeatRoot.tagName) return false;
+      if (repeatRoot.className && child.className) {
+        const rootClasses = String(repeatRoot.className).split(/\s+/).filter(Boolean);
+        const childClasses = String(child.className).split(/\s+/).filter(Boolean);
+        return rootClasses.some((c) => childClasses.includes(c));
+      }
+      return true;
+    });
+    const idx = siblings.indexOf(repeatRoot);
+    return idx >= 0 ? idx : 0;
+  }
+
   function buildFieldMeta(element) {
     const adapter = getActiveSiteAdapter();
     const type = getControlType(element);
@@ -1986,15 +2062,28 @@
     );
     const nearbyText = getNearbyText(element);
     const label = improveFieldLabel(element, rawLabel, nearbyText);
+    const ariaLabel = normalizeText(getAriaLabelText(element) || element.getAttribute("aria-label") || "");
     const currentValue = getControlCurrentValue(element);
     const groupText = getRepeatGroupLabelText(element);
+    const inferredHeading = inferSectionHeading(element);
+    const sectionHeading = inferredHeading || getSectionText(element);
+    const repeatRoot = findRepeatItemRoot(element);
+    const isRepeaterItem = Boolean(repeatRoot);
+    const repeaterIndex = isRepeaterItem ? getRepeaterIndex(element, repeatRoot) : -1;
 
     return {
       fieldId: getOrCreateFieldId(element),
+      controlType: type,
       type,
       tagName: element.tagName.toLowerCase(),
       label,
+      ariaLabel,
       placeholder: normalizeText(element.getAttribute("placeholder")),
+      nearbyText,
+      sectionHeading,
+      section: sectionHeading,
+      isRepeaterItem,
+      repeaterIndex,
       name: normalizeText(element.getAttribute("name")),
       id: normalizeText(element.getAttribute("id")),
       required: Boolean(element.required || element.getAttribute("aria-required") === "true"),
@@ -2003,8 +2092,6 @@
       hasCurrentValue: hasMeaningfulControlValue(element, label, currentValue),
       currentValue,
       canFill,
-      section: getSectionText(element),
-      nearbyText,
       groupText,
       options: getOptions(element),
       cssPath: getCssPath(element),
@@ -4688,6 +4775,61 @@
     return /^(姓名|电话|手机号|联系方式|工作单位|单位名称|公司|职务|职位|岗位|地址|住址|联系地址|通讯地址|关系|联系人|证明人|推荐人|学校|专业|学历|学位|部门|地点|城市|开始时间|结束时间)$/.test(labelKey);
   }
 
+  function isCandidateExcludedByFkgNegativeOrScope(field, entry, fieldLabel, fieldCategory) {
+    const combinedContext = [
+      fieldLabel,
+      field.nearbyText,
+      field.placeholder,
+      field.name,
+      field.id,
+      field.sectionHeading,
+      field.section
+    ].filter(Boolean).join(" ").toLowerCase();
+
+    // 1. Negative rules for candidate personal basic info:
+    if (entry.category === "基本信息") {
+      const entryLabel = String(entry.label || "");
+      if (/姓名|真实姓名/.test(entryLabel) && !/紧急|证明|推荐|关系/.test(entryLabel)) {
+        if (/(?:紧急联系人|紧急联络人|证明人|推荐人|父亲|母亲|家长|监护人|配偶|直属上级|emergency|reference|father|mother|parent|guardian|spouse|referee)/i.test(combinedContext)) {
+          return true;
+        }
+      }
+      if (/电话|手机/.test(entryLabel) && !/紧急|证明|推荐/.test(entryLabel)) {
+        if (/(?:紧急联系人|紧急联络人|证明人|推荐人|家庭电话|固定电话|办公电话|公司电话|座机|传真|emergency|reference|home phone|office phone|work phone|fax)/i.test(combinedContext)) {
+          return true;
+        }
+      }
+      if (/邮箱|email/i.test(entryLabel) && !/紧急|证明/.test(entryLabel)) {
+        if (/(?:紧急联系人|证明人|企业邮箱|公司邮箱|emergency|reference)/i.test(combinedContext)) {
+          return true;
+        }
+      }
+    }
+
+    // 2. Repeater item isolation: Candidate personal basic info must not fill into experience cards
+    if (field.isRepeaterItem && entry.category === "基本信息" && !/紧急|证明/.test(entry.label || "")) {
+      return true;
+    }
+
+    // 3. Strict paragraph / repeaterIndex isolation:
+    if (field.isRepeaterItem && Number(field.repeaterIndex) >= 0) {
+      let entryIndex = -1;
+      if (entry.prefix) {
+        const m = entry.prefix.match(/items\[(\d+)\]/);
+        if (m) entryIndex = Number(m[1]);
+      }
+      if (entryIndex < 0 && entry.subsection) {
+        const m = entry.subsection.match(/(\d+)/);
+        if (m) entryIndex = Number(m[1]) - 1;
+      }
+      if (entryIndex >= 0 && entryIndex !== Number(field.repeaterIndex)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   function scoreAutofillCandidate(field, entry, fieldLabel, fieldCategory) {
     if (!field || !entry) {
       return 0;
@@ -4727,6 +4869,10 @@
     }
 
     if (!isFamilyCandidateAllowed(field, entry, fieldLabel, fieldCategory)) {
+      return 0;
+    }
+
+    if (isCandidateExcludedByFkgNegativeOrScope(field, entry, fieldLabel, fieldCategory)) {
       return 0;
     }
 
@@ -5739,7 +5885,7 @@
       return fillRoleChoice(element, value, field, candidate);
     }
 
-    if (type === "combobox") {
+    if (type === "combobox" || element.getAttribute?.("role") === "combobox" || element.closest?.('[role="combobox"]')) {
       const choiceResult = await tryFillCustomChoiceField(element, value, field);
       if (choiceResult.ok) {
         return choiceResult;
@@ -5749,6 +5895,15 @@
       if (textInput && textInput !== element) {
         setNativeValue(textInput, value);
         return { ok: true, warning: "combobox fallback wrote into inner input only" };
+      }
+
+      const virtualDisplay = element.querySelector?.(
+        '.ant-select-selection-item, .el-select__selected-item, .arco-select-view-value, [class*="selection-item"], [class*="select-value"], [class*="selected-item"]'
+      );
+      if (virtualDisplay) {
+        virtualDisplay.textContent = String(value);
+        element.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+        return { ok: true, warning: "combobox virtual display updated" };
       }
     }
 
@@ -6399,28 +6554,90 @@
 
   function setNativeValue(element, value) {
     const stringValue = value == null ? "" : String(value);
-    const prototype =
-      element instanceof HTMLTextAreaElement
-        ? HTMLTextAreaElement.prototype
-        : element instanceof HTMLSelectElement
-          ? HTMLSelectElement.prototype
-          : element instanceof HTMLInputElement
-            ? HTMLInputElement.prototype
-            : null;
 
-    const descriptor = prototype ? Object.getOwnPropertyDescriptor(prototype, "value") : null;
+    // 1. Dispatch Focus
+    try {
+      if (typeof element.focus === "function") {
+        element.focus();
+      }
+    } catch {}
+    try {
+      const FocusEvt = typeof FocusEvent !== "undefined" ? FocusEvent : CustomEvent;
+      element.dispatchEvent(new FocusEvt("focus", { bubbles: true, composed: true }));
+    } catch {
+      element.dispatchEvent(new Event("focus", { bubbles: true, composed: true }));
+    }
+
+    // 2. React 16+ _valueTracker bypass & reset
+    try {
+      const tracker = element._valueTracker;
+      if (tracker && typeof tracker.setValue === "function") {
+        tracker.setValue(stringValue === "" ? "__ojaf_reset__" : "");
+      }
+    } catch {}
+
+    // 3. Prototype setter execution
+    let prototype = null;
+    if (element instanceof HTMLTextAreaElement) {
+      prototype = HTMLTextAreaElement.prototype;
+    } else if (element instanceof HTMLSelectElement) {
+      prototype = HTMLSelectElement.prototype;
+    } else if (element instanceof HTMLInputElement) {
+      prototype = HTMLInputElement.prototype;
+    } else if (element && typeof element === "object") {
+      prototype = Object.getPrototypeOf(element);
+    }
+
+    let descriptor = null;
+    let proto = prototype;
+    while (proto) {
+      const desc = Object.getOwnPropertyDescriptor(proto, "value");
+      if (desc && (desc.set || desc.get)) {
+        descriptor = desc;
+        break;
+      }
+      proto = Object.getPrototypeOf(proto);
+    }
+
     if (descriptor && descriptor.set) {
       descriptor.set.call(element, stringValue);
     } else {
       element.value = stringValue;
     }
 
-    if (element.setAttribute && element instanceof HTMLInputElement) {
-      element.setAttribute("value", stringValue);
+    if (element.setAttribute && (element instanceof HTMLInputElement || element.tagName === "INPUT")) {
+      try {
+        element.setAttribute("value", stringValue);
+      } catch {}
     }
-    element.dispatchEvent(new Event("input", { bubbles: true }));
-    element.dispatchEvent(new Event("change", { bubbles: true }));
-    element.dispatchEvent(new Event("blur", { bubbles: true }));
+
+    // 4. Input event with composed: true
+    try {
+      const inputEvt = typeof InputEvent !== "undefined"
+        ? new InputEvent("input", { bubbles: true, cancelable: true, composed: true, data: stringValue, inputType: "insertText" })
+        : new Event("input", { bubbles: true, composed: true });
+      element.dispatchEvent(inputEvt);
+    } catch {
+      element.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+    }
+
+    // 5. Change event with composed: true
+    try {
+      element.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+    } catch {}
+
+    // 6. Dispatch Blur
+    try {
+      if (typeof element.blur === "function") {
+        element.blur();
+      }
+    } catch {}
+    try {
+      const FocusEvt = typeof FocusEvent !== "undefined" ? FocusEvent : CustomEvent;
+      element.dispatchEvent(new FocusEvt("blur", { bubbles: true, composed: true }));
+    } catch {
+      element.dispatchEvent(new Event("blur", { bubbles: true, composed: true }));
+    }
   }
 
   function setCheckboxOrRadio(element, value) {
@@ -6429,17 +6646,50 @@
       const group = element.name ? Array.from(document.querySelectorAll(`input[type="radio"][name="${CSS.escape(element.name)}"]`)) : [element];
       const matched = group.find((radio) => choiceTextMatches(getChoiceLabelText(radio), target) || choiceTextMatches(radio.value || "", target));
       if (matched) {
+        try {
+          matched.focus?.();
+          matched.dispatchEvent(new Event("focus", { bubbles: true, composed: true }));
+        } catch {}
+        if (matched._valueTracker && typeof matched._valueTracker.setValue === "function") {
+          matched._valueTracker.setValue(false);
+        }
         matched.click();
-        matched.dispatchEvent(new Event("change", { bubbles: true }));
+        matched.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+        matched.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+        try {
+          matched.blur?.();
+          matched.dispatchEvent(new Event("blur", { bubbles: true, composed: true }));
+        } catch {}
       }
       return;
     }
 
     const normalized = String(value).trim().toLowerCase();
     const shouldCheck = ["true", "yes", "是", "1", "checked", "on"].includes(normalized);
-    element.checked = shouldCheck;
-    element.dispatchEvent(new Event("input", { bubbles: true }));
-    element.dispatchEvent(new Event("change", { bubbles: true }));
+
+    try {
+      element.focus?.();
+      element.dispatchEvent(new Event("focus", { bubbles: true, composed: true }));
+    } catch {}
+
+    if (element._valueTracker && typeof element._valueTracker.setValue === "function") {
+      element._valueTracker.setValue(!shouldCheck);
+    }
+
+    const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "checked");
+    if (descriptor && descriptor.set) {
+      descriptor.set.call(element, shouldCheck);
+    } else {
+      element.checked = shouldCheck;
+    }
+
+    element.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+    element.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+
+    try {
+      element.blur?.();
+      element.dispatchEvent(new Event("blur", { bubbles: true, composed: true }));
+    } catch {}
   }
 
   function setSelectValue(element, value) {

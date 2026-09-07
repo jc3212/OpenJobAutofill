@@ -20,6 +20,9 @@ async function runAll() {
     await import("./unit/resume-schema.test.js");
     await import("./unit/resume-segmentation.test.js");
     await import("./unit/profile-reconciler.test.js");
+    await import("./unit/universal-framework-filler.test.js");
+    await import("./unit/field-knowledge-graph.test.js");
+    await import("./benchmark/field-accuracy.test.js");
     await import("./integration/migration-backward-compatibility.test.js");
     await import("./test-phase0-security.js");
     await import("./test-phase1-invariants-concurrency.js");

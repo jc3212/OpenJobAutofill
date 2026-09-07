@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>智业/北森校园招聘网申系统</title>
+</head>
+<body>
+  <div class="zhiye-form-root">
+    <h1>2027 届校园招聘申请表</h1>
+
+    <!-- 1. 个人基本信息 -->
+    <div class="ant-card card form-module">
+      <div class="ant-card-head-title">个人基本信息</div>
+      <div class="ant-form-item">
+        <label class="ant-form-item-label" for="zy_name">真实姓名</label>
+        <input type="text" id="zy_name" class="ant-input" placeholder="请输入真实姓名" />
+      </div>
+      <div class="ant-form-item">
+        <label class="ant-form-item-label" for="zy_gender">性别</label>
+        <div role="combobox" id="zy_gender" class="ant-select">
+          <span class="ant-select-selection-item">请选择性别</span>
+        </div>
+      </div>
+      <div class="ant-form-item">
+        <label class="ant-form-item-label" for="zy_dob">出生日期</label>
+        <input type="date" id="zy_dob" class="ant-picker-input" placeholder="请选择出生年月日" />
+      </div>
+      <div class="ant-form-item">
+        <label class="ant-form-item-label" for="zy_id_card">身份证号码</label>
+        <input type="text" id="zy_id_card" class="ant-input" placeholder="请输入18位身份证号" />
+      </div>
+      <div class="ant-form-item">
+        <label class="ant-form-item-label" for="zy_phone">手机号码</label>
+        <input type="tel" id="zy_phone" class="ant-input" placeholder="请输入本人联系手机" />
+      </div>
+      <div class="ant-form-item">
+        <label class="ant-form-item-label" for="zy_email">个人邮箱</label>
+        <input type="email" id="zy_email" class="ant-input" placeholder="用于接收笔试与面试通知" />
+      </div>
+      <div class="ant-form-item">
+        <label class="ant-form-item-label" for="zy_city">现居住城市</label>
+        <input type="text" id="zy_city" class="ant-input" placeholder="现居城市" />
+      </div>
+      <div class="ant-form-item">
+        <label class="ant-form-item-label" for="zy_hometown">籍贯</label>
+        <input type="text" id="zy_hometown" class="ant-input" placeholder="省份/城市" />
+      </div>
+    </div>
+
+    <!-- 2. 紧急联系人信息 (负向排除测试) -->
+    <div class="ant-card card form-module">
+      <div class="ant-card-head-title">紧急联系人信息</div>
+      <div class="ant-form-item">
+        <label class="ant-form-item-label" for="zy_ice_name">紧急联系人姓名</label>
+        <input type="text" id="zy_ice_name" class="ant-input" placeholder="紧急情况联系人" />
+      </div>
+      <div class="ant-form-item">
+        <label class="ant-form-item-label" for="zy_ice_relation">与紧急联系人关系</label>
+        <input type="text" id="zy_ice_relation" class="ant-input" placeholder="父亲/母亲/配偶等" />
+      </div>
+      <div class="ant-form-item">
+        <label class="ant-form-item-label" for="zy_ice_phone">紧急联系人电话</label>
+        <input type="tel" id="zy_ice_phone" class="ant-input" placeholder="紧急联系人手机号" />
+      </div>
+    </div>
+
+    <!-- 3. 教育经历 -->
+    <div class="ant-card card form-module">
+      <div class="ant-card-head-title">教育经历</div>
+      <div class="resume-block repeater-item">
+        <div class="ant-form-item">
+          <label class="ant-form-item-label" for="zy_school">毕业院校</label>
+          <input type="text" id="zy_school" class="ant-input" placeholder="请输入就读院校名称" />
+        </div>
+        <div class="ant-form-item">
+          <label class="ant-form-item-label" for="zy_major">所学专业</label>
+          <input type="text" id="zy_major" class="ant-input" placeholder="专业全称" />
+        </div>
+        <div class="ant-form-item">
+          <label class="ant-form-item-label" for="zy_degree">学历</label>
+          <input type="text" id="zy_degree" class="ant-input" placeholder="本科/硕士研究生" />
+        </div>
+        <div class="ant-form-item">
+          <label class="ant-form-item-label" for="zy_edu_start">入学时间</label>
+          <input type="month" id="zy_edu_start" class="ant-picker-input" />
+        </div>
+        <div class="ant-form-item">
+          <label class="ant-form-item-label" for="zy_edu_end">毕业时间</label>
+          <input type="month" id="zy_edu_end" class="ant-picker-input" />
+        </div>
+        <div class="ant-form-item">
+          <label class="ant-form-item-label" for="zy_gpa">GPA/成绩排名</label>
+          <input type="text" id="zy_gpa" class="ant-input" placeholder="例如: 3.8/4.0 或 前 5%" />
+        </div>
+      </div>
+    </div>
+
+    <!-- 4. 工作/实习经历 -->
+    <div class="ant-card card form-module">
+      <div class="ant-card-head-title">工作/实习经历</div>
+      <div class="resume-block repeater-item">
+        <div class="ant-form-item">
+          <label class="ant-form-item-label" for="zy_company">就职企业</label>
+          <input type="text" id="zy_company" class="ant-input" placeholder="实习或就职单位全称" />
+        </div>
+        <div class="ant-form-item">
+          <label class="ant-form-item-label" for="zy_role">担任职位</label>
+          <input type="text" id="zy_role" class="ant-input" placeholder="职位名称" />
+        </div>
+        <div class="ant-form-item">
+          <label class="ant-form-item-label" for="zy_work_start">入职时间</label>
+          <input type="month" id="zy_work_start" class="ant-picker-input" />
+        </div>
+        <div class="ant-form-item">
+          <label class="ant-form-item-label" for="zy_work_end">离职时间</label>
+          <input type="month" id="zy_work_end" class="ant-picker-input" />
+        </div>
+        <div class="ant-form-item">
+          <label class="ant-form-item-label" for="zy_work_desc">工作内容</label>
+          <textarea id="zy_work_desc" class="ant-input" placeholder="主要工作职责和产出成果"></textarea>
+        </div>
+        <div class="ant-form-item">
+          <label class="ant-form-item-label" for="zy_ref_name">证明人姓名</label>
+          <input type="text" id="zy_ref_name" class="ant-input" placeholder="前任直属上级姓名" />
+        </div>
+        <div class="ant-form-item">
+          <label class="ant-form-item-label" for="zy_ref_phone">证明人联系方式</label>
+          <input type="tel" id="zy_ref_phone" class="ant-input" placeholder="证明人手机号" />
+        </div>
+      </div>
+    </div>
+
+    <!-- 5. 项目经历 -->
+    <div class="ant-card card form-module">
+      <div class="ant-card-head-title">项目经历</div>
+      <div class="resume-block repeater-item">
+        <div class="ant-form-item">
+          <label class="ant-form-item-label" for="zy_proj_name">项目名称</label>
+          <input type="text" id="zy_proj_name" class="ant-input" placeholder="参与的项目名称" />
+        </div>
+        <div class="ant-form-item">
+          <label class="ant-form-item-label" for="zy_proj_role">担任角色</label>
+          <input type="text" id="zy_proj_role" class="ant-input" placeholder="例如: 核心研发/项目经理" />
+        </div>
+        <div class="ant-form-item">
+          <label class="ant-form-item-label" for="zy_proj_desc">项目内容</label>
+          <textarea id="zy_proj_desc" class="ant-input" placeholder="项目背景与个人贡献"></textarea>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Workday Job Application</title>
+</head>
+<body>
+  <div class="workday-app-container">
+    <h1>Workday Candidate Portal</h1>
+
+    <!-- 1. My Information -->
+    <fieldset class="module card personal-details">
+      <legend>My Information</legend>
+      <div class="form-group">
+        <label for="wd_first_name">Legal First Name</label>
+        <input type="text" id="wd_first_name" name="legalFirstName" aria-label="Legal First Name" />
+      </div>
+      <div class="form-group">
+        <label for="wd_last_name">Legal Last Name</label>
+        <input type="text" id="wd_last_name" name="legalLastName" aria-label="Legal Last Name" />
+      </div>
+      <div class="form-group">
+        <label for="wd_email">Email Address</label>
+        <input type="email" id="wd_email" name="emailAddress" aria-label="Email Address" />
+      </div>
+      <div class="form-group">
+        <label for="wd_phone">Phone Number</label>
+        <input type="tel" id="wd_phone" name="phoneNumber" aria-label="Phone Number" />
+      </div>
+      <div class="form-group">
+        <label for="wd_city">City</label>
+        <input type="text" id="wd_city" name="currentCity" aria-label="Current City" />
+      </div>
+    </fieldset>
+
+    <!-- 2. Emergency Contact (Negative Target Exclusion) -->
+    <fieldset class="module card emergency-contact-module">
+      <legend>Emergency Contact</legend>
+      <div class="form-group">
+        <label for="wd_ice_name">Emergency Contact Name</label>
+        <input type="text" id="wd_ice_name" name="emergencyContactName" aria-label="Emergency Contact Name" />
+      </div>
+      <div class="form-group">
+        <label for="wd_ice_phone">Emergency Phone Number</label>
+        <input type="tel" id="wd_ice_phone" name="emergencyPhoneNumber" aria-label="Emergency Phone Number" />
+      </div>
+      <div class="form-group">
+        <label for="wd_ice_relation">Relationship</label>
+        <input type="text" id="wd_ice_relation" name="emergencyRelationship" aria-label="Relationship to Emergency Contact" />
+      </div>
+    </fieldset>
+
+    <!-- 3. Work Experience -->
+    <fieldset class="module card experience-module">
+      <legend>Work Experience</legend>
+      <div class="experience-card repeater-item">
+        <h3>Experience 1</h3>
+        <div class="form-group">
+          <label for="wd_job_title">Job Title</label>
+          <input type="text" id="wd_job_title" name="jobTitle" aria-label="Job Title" />
+        </div>
+        <div class="form-group">
+          <label for="wd_company">Company</label>
+          <input type="text" id="wd_company" name="company" aria-label="Company Name" />
+        </div>
+        <div class="form-group">
+          <label for="wd_work_from">From Date</label>
+          <input type="month" id="wd_work_from" name="fromDate" aria-label="Work Start Date" />
+        </div>
+        <div class="form-group">
+          <label for="wd_work_to">To Date</label>
+          <input type="month" id="wd_work_to" name="toDate" aria-label="Work End Date" />
+        </div>
+        <div class="form-group">
+          <label for="wd_role_desc">Role Description</label>
+          <textarea id="wd_role_desc" name="roleDescription" aria-label="Job Description"></textarea>
+        </div>
+      </div>
+    </fieldset>
+
+    <!-- 4. Education -->
+    <fieldset class="module card education-module">
+      <legend>Education</legend>
+      <div class="education-card repeater-item">
+        <h3>Education 1</h3>
+        <div class="form-group">
+          <label for="wd_school">School or University</label>
+          <input type="text" id="wd_school" name="schoolName" aria-label="University or College" />
+        </div>
+        <div class="form-group">
+          <label for="wd_degree">Degree</label>
+          <input type="text" id="wd_degree" name="degree" aria-label="Degree" />
+        </div>
+        <div class="form-group">
+          <label for="wd_field_study">Field of Study</label>
+          <input type="text" id="wd_field_study" name="fieldOfStudy" aria-label="Major or Field of Study" />
+        </div>
+        <div class="form-group">
+          <label for="wd_gpa">Overall Result (GPA)</label>
+          <input type="text" id="wd_gpa" name="gpaScore" aria-label="GPA or Academic Score" />
+        </div>
+        <div class="form-group">
+          <label for="wd_edu_from">Start Date</label>
+          <input type="month" id="wd_edu_from" name="eduStartDate" aria-label="Education Start Date" />
+        </div>
+        <div class="form-group">
+          <label for="wd_edu_to">End Date</label>
+          <input type="month" id="wd_edu_to" name="eduEndDate" aria-label="Education End Date" />
+        </div>
+      </div>
+    </fieldset>
+  </div>
+</body>
+</html>
