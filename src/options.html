@@ -193,6 +193,20 @@
             </p>
           </div>
 
+          <div class="network-settings-block">
+            <label class="checkline">
+              <input id="allowLocalEndpoints" type="checkbox" />
+              <span>允许本地/局域网 AI 端点（localhost、127.0.0.1、192.168.x.x 等）</span>
+            </label>
+            <p class="hint">
+              仅在使用 Ollama、LM Studio、vLLM 等本地服务时开启。输入 localhost 或本地端口时将自动开启。<br />
+              <strong>💡 本地模型提示：</strong><br />
+              • <strong>Ollama</strong>：默认端口 <code>11434</code>，OpenAI 兼容路径需带 <code>/v1</code>（填入 <code>http://localhost:11434</code> 会自动补全为 <code>/v1</code>）。插件内置 Origin 头智能重写，通常免配置直接连接。若遇 403 Forbidden，可在系统配置环境变量 <code>OLLAMA_ORIGINS="*"</code> 并重启 Ollama。<br />
+              • <strong>LM Studio</strong>：默认端口 <code>1234</code>（如 <code>http://localhost:1234/v1</code>），在 Local Server 选项卡中启动。<br />
+              • <strong>vLLM</strong>：默认端口 <code>8000</code>（如 <code>http://localhost:8000/v1</code>）。
+            </p>
+          </div>
+
           <div class="actions">
             <button id="saveApiSettings" type="submit">保存 API 设置</button>
             <button id="refreshModels" class="secondary" type="button">刷新候选模型</button>

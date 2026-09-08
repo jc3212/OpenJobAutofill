@@ -29,6 +29,7 @@ async function runAll() {
     await import("./test-phase2-parsers-pii-ssrf.js");
     await import("./test-phase3-e2e-workflows.js");
     await import("./unit/adversarial-fixes-v1-v12.test.js");
+    await import("./unit/local-endpoint-security.test.js");
 
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
     console.log("==================================================================");

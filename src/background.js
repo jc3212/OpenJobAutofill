@@ -6,6 +6,14 @@ import {
   getUpdateApiUrl,
   getReleasesUrl
 } from "./lib/config.js";
+import {
+  validateEndpointUrl,
+  validateConfiguredEndpoint,
+  normalizeOpenAiBaseUrl,
+  getOllamaDnrRules,
+  OLLAMA_DNR_RULE_LOCALHOST_ID,
+  OLLAMA_DNR_RULE_127001_ID
+} from "./lib/endpoint-validator.js";
 
 const DEFAULT_API_CONFIG = {
   mode: "openai-compatible",
@@ -20,7 +28,8 @@ const DEFAULT_API_CONFIG = {
   customHeadersJson: "{}",
   customBodyTemplate:
     '{\n  "model": {{modelJson}},\n  "messages": {{messagesJson}},\n  "temperature": 0\n}',
-  customResponsePath: "choices.0.message.content"
+  customResponsePath: "choices.0.message.content",
+  allowLocalEndpoints: false
 };
 
 const PROFILE_SCHEMA_VERSION = 2;
@@ -45,63 +54,116 @@ const UPDATE_REPOSITORY = UPSTREAM_REPOSITORY;
 const UPDATE_LATEST_RELEASE_API = getUpdateApiUrl(UPDATE_REPOSITORY);
 const UPDATE_RELEASES_URL = getReleasesUrl(UPDATE_REPOSITORY);
 
-chrome.runtime?.onInstalled?.addListener(async () => {
-  await ProfileStore.ensureInitialized(normalizeProfileV2).catch(() => undefined);
-  const existing = await chrome.storage.local.get([
-    STORAGE_KEYS.apiConfig,
-    STORAGE_KEYS.updateState
-  ]);
-  const next = {};
-
-  if (!existing[STORAGE_KEYS.apiConfig]) {
-    next[STORAGE_KEYS.apiConfig] = DEFAULT_API_CONFIG;
+async function syncDeclarativeNetRequestRules(enable = true) {
+  if (typeof chrome === "undefined" || !chrome.declarativeNetRequest?.updateDynamicRules) {
+    return false;
   }
-
-  if (!existing[STORAGE_KEYS.updateState]) {
-    next[STORAGE_KEYS.updateState] = createDefaultUpdateState();
+  try {
+    const removeRuleIds = [OLLAMA_DNR_RULE_LOCALHOST_ID, OLLAMA_DNR_RULE_127001_ID];
+    const extId = chrome.runtime?.id || "";
+    const addRules = enable ? getOllamaDnrRules(extId) : [];
+    await chrome.declarativeNetRequest.updateDynamicRules({
+      removeRuleIds,
+      addRules
+    });
+    return true;
+  } catch (err) {
+    console.warn("OJAF: failed to sync declarativeNetRequest rules:", err);
+    return false;
   }
+}
+if (typeof chrome !== "undefined") {
+  chrome.runtime?.onInstalled?.addListener(async () => {
+    await ProfileStore.ensureInitialized(normalizeProfileV2).catch(() => undefined);
+    const existing = await chrome.storage.local.get([
+      STORAGE_KEYS.apiConfig,
+      STORAGE_KEYS.updateState
+    ]);
+    const next = {};
 
-  if (Object.keys(next).length > 0) {
-    await chrome.storage.local.set(next);
-  }
+    if (!existing[STORAGE_KEYS.apiConfig]) {
+      next[STORAGE_KEYS.apiConfig] = DEFAULT_API_CONFIG;
+    }
 
-  await setupUpdateAlarm().catch(() => undefined);
-  void checkForUpdate({ reason: "installed" }).catch(() => undefined);
-});
+    if (!existing[STORAGE_KEYS.updateState]) {
+      next[STORAGE_KEYS.updateState] = createDefaultUpdateState();
+    }
 
-chrome.runtime.onStartup?.addListener(() => {
-  void ProfileStore.ensureInitialized(normalizeProfileV2).catch(() => undefined);
+    if (Object.keys(next).length > 0) {
+      await chrome.storage.local.set(next);
+    }
+
+    const effectiveConfig = next[STORAGE_KEYS.apiConfig] || existing[STORAGE_KEYS.apiConfig] || DEFAULT_API_CONFIG;
+    await syncDeclarativeNetRequestRules(Boolean(effectiveConfig.allowLocalEndpoints)).catch(() => undefined);
+
+    await setupUpdateAlarm().catch(() => undefined);
+    void checkForUpdate({ reason: "installed" }).catch(() => undefined);
+  });
+
+  chrome.runtime?.onStartup?.addListener(async () => {
+    void ProfileStore.ensureInitialized(normalizeProfileV2).catch(() => undefined);
+    const existing = await chrome.storage.local.get([STORAGE_KEYS.apiConfig]).catch(() => ({}));
+    const effectiveConfig = existing?.[STORAGE_KEYS.apiConfig] || DEFAULT_API_CONFIG;
+    await syncDeclarativeNetRequestRules(Boolean(effectiveConfig.allowLocalEndpoints)).catch(() => undefined);
+    void setupUpdateAlarm().catch(() => undefined);
+    void refreshUpdateBadge().catch(() => undefined);
+  });
+
+  chrome.alarms?.onAlarm.addListener((alarm) => {
+    if (alarm.name === UPDATE_ALARM_NAME) {
+      void checkForUpdate({ reason: "alarm" }).catch(() => undefined);
+    }
+  });
+
   void setupUpdateAlarm().catch(() => undefined);
   void refreshUpdateBadge().catch(() => undefined);
-});
 
-chrome.alarms?.onAlarm.addListener((alarm) => {
-  if (alarm.name === UPDATE_ALARM_NAME) {
-    void checkForUpdate({ reason: "alarm" }).catch(() => undefined);
-  }
-});
+  // Auto-sync DNR rules on background worker spin-up
+  void (async () => {
+    try {
+      const existing = await chrome.storage.local.get([STORAGE_KEYS.apiConfig]);
+      const cfg = existing?.[STORAGE_KEYS.apiConfig];
+      await syncDeclarativeNetRequestRules(Boolean(cfg?.allowLocalEndpoints));
+    } catch {}
+  })();
 
-void setupUpdateAlarm().catch(() => undefined);
-void refreshUpdateBadge().catch(() => undefined);
+  chrome.runtime?.onMessage?.addListener((message, sender, sendResponse) => {
+    if (!message || typeof message.type !== "string" || !message.type.startsWith("OJAF_")) {
+      return undefined;
+    }
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (!message || typeof message.type !== "string" || !message.type.startsWith("OJAF_")) {
-    return undefined;
-  }
-
-  handleMessage(message)
-    .then((data) => sendResponse({ ok: true, data }))
-    .catch((error) => {
-      sendResponse({
-        ok: false,
-        error: error instanceof Error ? error.message : String(error)
+    handleMessage(message, sender)
+      .then((data) => sendResponse({ ok: true, data }))
+      .catch((error) => {
+        sendResponse({
+          ok: false,
+          error: error instanceof Error ? error.message : String(error)
+        });
       });
-    });
 
-  return true;
-});
+    return true;
+  });
+}
 
-async function handleMessage(message) {
+async function handleMessage(message, sender) {
+  // Security Boundary: Administrative actions (saving/clearing settings, testing arbitrary connection)
+  // must NEVER be callable from arbitrary webpage content scripts.
+  const SENSITIVE_INTERNAL_ACTIONS = new Set([
+    MESSAGE_TYPES.SAVE_SETTINGS,
+    MESSAGE_TYPES.CLEAR_SETTINGS,
+    MESSAGE_TYPES.TEST_CONNECTION,
+    MESSAGE_TYPES.LIST_MODELS
+  ]);
+
+  if (sender?.tab && SENSITIVE_INTERNAL_ACTIONS.has(message.type)) {
+    const extBaseUrl = (typeof chrome !== "undefined" && chrome.runtime?.getURL)
+      ? chrome.runtime.getURL("")
+      : "chrome-extension://";
+    const isExtensionPage = Boolean(sender.url && sender.url.startsWith(extBaseUrl));
+    if (!isExtensionPage) {
+      throw new Error("UNAUTHORIZED_CALLER: 此管理操作仅允许由扩展内部页面触发。");
+    }
+  }
   switch (message.type) {
     case MESSAGE_TYPES.GET_SETTINGS:
       return getSettings();
@@ -190,7 +252,13 @@ async function saveSettings(payload) {
 
   const next = {};
   if (payload.apiConfig) {
-    next[STORAGE_KEYS.apiConfig] = { ...DEFAULT_API_CONFIG, ...payload.apiConfig };
+    const apiConfig = { ...DEFAULT_API_CONFIG, ...payload.apiConfig };
+    if (apiConfig.mode === "openai-compatible" && apiConfig.baseUrl) {
+      apiConfig.baseUrl = normalizeOpenAiBaseUrl(apiConfig.baseUrl);
+    }
+    validateConfiguredEndpoint(apiConfig);
+    next[STORAGE_KEYS.apiConfig] = apiConfig;
+    await syncDeclarativeNetRequestRules(Boolean(apiConfig.allowLocalEndpoints)).catch(() => undefined);
   }
 
   await chrome.storage.local.set(next);
@@ -426,7 +494,10 @@ async function mapFields(payload) {
   }
 
   const settings = await getSettings();
-  const apiConfig = { ...settings.apiConfig, ...(payload.apiConfig || {}) };
+  // SECURITY SSRF BOUNDARY: Always use user's saved apiConfig from storage.
+  // Callers (webpage content scripts) MUST NOT override the configured endpoint!
+  const apiConfig = settings.apiConfig;
+  validateConfiguredEndpoint(apiConfig);
   const profileCatalog = normalizeProvidedProfileCatalog(payload.profileCatalog);
   if (!profileCatalog) {
     throw new Error("Missing profile field catalog.");
@@ -467,7 +538,9 @@ async function analyzePageStructure(payload) {
   }
 
   const settings = await getSettings();
-  const apiConfig = { ...settings.apiConfig, ...(payload.apiConfig || {}) };
+  // SECURITY SSRF BOUNDARY: Always use user's saved apiConfig from storage.
+  const apiConfig = settings.apiConfig;
+  validateConfiguredEndpoint(apiConfig);
   const taskDeadline = Number(payload.taskDeadline || 0) || (Date.now() + 25000);
   const { outboundScan, opaqueToRealId } = createOutboundAiDto(scan);
 
@@ -494,6 +567,13 @@ async function analyzePageStructure(payload) {
 async function testApi(payload) {
   const settings = await getSettings();
   const apiConfig = { ...settings.apiConfig, ...(payload.apiConfig || {}) };
+  if (apiConfig.mode === "openai-compatible" && apiConfig.baseUrl) {
+    apiConfig.baseUrl = normalizeOpenAiBaseUrl(apiConfig.baseUrl);
+  }
+  validateConfiguredEndpoint(apiConfig);
+  if (apiConfig.allowLocalEndpoints) {
+    await syncDeclarativeNetRequestRules(true).catch(() => undefined);
+  }
   const fakeProfile = {
     sections: [
       {
@@ -547,6 +627,13 @@ async function testApi(payload) {
 async function listModels(payload) {
   const settings = await getSettings();
   const apiConfig = { ...settings.apiConfig, ...(payload.apiConfig || {}) };
+  if (apiConfig.mode === "openai-compatible" && apiConfig.baseUrl) {
+    apiConfig.baseUrl = normalizeOpenAiBaseUrl(apiConfig.baseUrl);
+  }
+  validateConfiguredEndpoint(apiConfig);
+  if (apiConfig.allowLocalEndpoints) {
+    await syncDeclarativeNetRequestRules(true).catch(() => undefined);
+  }
   const url = resolveModelListUrl(apiConfig);
   if (!url) {
     throw new Error(apiConfig.mode === "custom" ? "Custom API URL is required." : "API base URL is required.");
@@ -833,7 +920,9 @@ async function callOpenAiCompatible(apiConfig, messages, context) {
     throw new Error("Model name is required.");
   }
 
-  const url = joinUrl(apiConfig.baseUrl, apiConfig.endpointPath || "/chat/completions");
+  const baseUrl = normalizeOpenAiBaseUrl(apiConfig.baseUrl);
+  const url = joinUrl(baseUrl, apiConfig.endpointPath || "/chat/completions");
+  validateEndpointUrl(url, Boolean(apiConfig.allowLocalEndpoints));
   const headers = buildRequestHeaders({ apiConfig, headerJson: apiConfig.extraHeadersJson });
 
   const body = {
@@ -904,6 +993,7 @@ async function callCustomApi(apiConfig, messages, context) {
     throw new Error("Custom API URL is required.");
   }
 
+  validateEndpointUrl(apiConfig.customUrl, Boolean(apiConfig.allowLocalEndpoints));
   const headers = buildRequestHeaders({ apiConfig, headerJson: apiConfig.customHeadersJson });
 
   const body = renderTemplate(apiConfig.customBodyTemplate || DEFAULT_API_CONFIG.customBodyTemplate, {
@@ -977,7 +1067,9 @@ function buildRequestHeaders({ apiConfig, headerJson, includeContentType = true 
 
 function resolveModelListUrl(apiConfig) {
   if (apiConfig.mode === "openai-compatible") {
-    return apiConfig.baseUrl ? joinUrl(apiConfig.baseUrl, "/models") : "";
+    if (!apiConfig.baseUrl) return "";
+    const baseUrl = normalizeOpenAiBaseUrl(apiConfig.baseUrl);
+    return joinUrl(baseUrl, "/models");
   }
 
   const derived = deriveModelListUrl(apiConfig.customUrl || "");
@@ -1309,43 +1401,6 @@ function getByPath(source, path) {
   return current;
 }
 
-function validateEndpointUrl(url, allowLocalEndpoints = false) {
-  let parsed;
-  try {
-    parsed = new URL(url);
-  } catch {
-    throw new Error("API 地址格式不正确。");
-  }
-
-  if (parsed.protocol !== "https:" && !allowLocalEndpoints) {
-    throw new Error("为保障安全，API 请求仅允许使用 HTTPS 协议。如需使用本地/局域网接口，请在设置中开启对应选项。");
-  }
-
-  const rawHostname = parsed.hostname.toLowerCase();
-  const hostname = rawHostname.replace(/^\[|\]$/g, "");
-  const isPrivateOrLocal =
-    hostname === "localhost" ||
-    hostname === "127.0.0.1" ||
-    hostname === "::1" ||
-    hostname === "0.0.0.0" ||
-    hostname.endsWith(".local") ||
-    hostname.endsWith(".internal") ||
-    /^10\./.test(hostname) ||
-    /^192\.168\./.test(hostname) ||
-    /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(hostname) ||
-    /^169\.254\./.test(hostname) ||
-    /^fc00:/i.test(hostname) ||
-    /^fe80:/i.test(hostname) ||
-    /^0x/i.test(hostname) ||
-    /^\d+$/.test(hostname);
-
-  if (isPrivateOrLocal && !allowLocalEndpoints) {
-    throw new Error("为防止内网穿透与安全风险，默认禁止请求私网或本地回环地址。如需使用本地 Ollama 等服务，请在高级设置中开启“允许本地/局域网端点”。");
-  }
-
-  return true;
-}
-
 function cleanPrototypePollution(obj, depth = 0) {
   if (depth > 6 || !obj || typeof obj !== "object") {
     return obj;
@@ -1374,8 +1429,7 @@ async function parseResumeWithAi(payload) {
 
   const settings = await chrome.storage.local.get([STORAGE_KEYS.apiConfig]);
   const apiConfig = { ...DEFAULT_API_CONFIG, ...(settings[STORAGE_KEYS.apiConfig] || {}) };
-  const targetUrl = apiConfig.mode === "custom" ? apiConfig.customUrl : apiConfig.baseUrl;
-  validateEndpointUrl(targetUrl, apiConfig.allowLocalEndpoints);
+  validateConfiguredEndpoint(apiConfig);
 
   const systemPrompt = [
     "You are a professional resume structure analyzer.",
@@ -1514,6 +1568,10 @@ export {
   callAi,
   callOpenAiCompatible,
   callCustomApi,
-  handleMessage
+  handleMessage,
+  validateEndpointUrl,
+  validateConfiguredEndpoint,
+  normalizeOpenAiBaseUrl,
+  syncDeclarativeNetRequestRules
 };
 

@@ -5,6 +5,7 @@ import {
   extractLocalProfileAndPii,
   mergeAiSectionsIntoProfile
 } from "../src/lib/profile-extractor.js";
+import { validateEndpointUrl, validateConfiguredEndpoint } from "../src/background.js";
 
 console.log("=== Running Phase 2: Parsers, PII Extraction & SSRF Gate ===");
 
@@ -135,43 +136,6 @@ console.log("  ✔ PII Immunity verified: local high-confidence PII completely p
 
 // 4. SSRF Security Filter
 console.log("4. Testing SSRF Endpoint Protection...");
-// Replicate background.js validateEndpointUrl logic
-function validateEndpointUrl(url, allowLocalEndpoints = false) {
-  let parsed;
-  try {
-    parsed = new URL(url);
-  } catch {
-    throw new Error("API 地址格式不正确。");
-  }
-
-  if (parsed.protocol !== "https:" && !allowLocalEndpoints) {
-    throw new Error("HTTPS_REQUIRED");
-  }
-
-  const rawHostname = parsed.hostname.toLowerCase();
-  const hostname = rawHostname.replace(/^\[|\]$/g, "");
-  const isPrivateOrLocal =
-    hostname === "localhost" ||
-    hostname === "127.0.0.1" ||
-    hostname === "::1" ||
-    hostname === "0.0.0.0" ||
-    hostname.endsWith(".local") ||
-    hostname.endsWith(".internal") ||
-    /^10\./.test(hostname) ||
-    /^192\.168\./.test(hostname) ||
-    /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(hostname) ||
-    /^169\.254\./.test(hostname) ||
-    /^fc00:/i.test(hostname) ||
-    /^fe80:/i.test(hostname) ||
-    /^0x/i.test(hostname) ||
-    /^\d+$/.test(hostname);
-
-  if (isPrivateOrLocal && !allowLocalEndpoints) {
-    throw new Error("SSRF_BLOCKED");
-  }
-
-  return true;
-}
 
 // Insecure protocols
 assert.throws(() => validateEndpointUrl("http://api.example.com"), /HTTPS_REQUIRED/);
@@ -180,15 +144,23 @@ assert.throws(() => validateEndpointUrl("http://api.example.com"), /HTTPS_REQUIR
 const dangerousEndpoints = [
   "https://localhost/v1",
   "https://127.0.0.1:8000/v1",
+  "https://127.0.0.2:8000/v1",
+  "https://evil.localhost/v1",
   "https://[::1]:8080/v1",
+  "https://[::ffff:7f00:1]:8000/v1",
+  "https://[::ffff:a9fe:a9fe]/latest/meta-data",
+  "https://[fd00:ec2::254]/latest/meta-data",
   "https://192.168.1.1/api",
   "https://10.0.0.1/api",
   "https://172.16.0.1/api",
+  "https://100.64.0.1/api",
   "https://169.254.169.254/latest/meta-data",
   "https://service.internal/api",
   "https://router.local/api",
   "https://0x7f.1/api",
-  "https://2130706433/api" // decimal 127.0.0.1
+  "https://2130706433/api", // decimal 127.0.0.1
+  "https://0177.0.0.1/api",  // octal 127.0.0.1
+  "https://127.1/api"        // shorthand 127.0.0.1
 ];
 
 for (const target of dangerousEndpoints) {

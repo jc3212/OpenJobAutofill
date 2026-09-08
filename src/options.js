@@ -9,6 +9,12 @@ import {
   restorePassthrough,
   assertProfileV2Schema
 } from "./lib/resume-schema.js";
+import {
+  normalizeOpenAiBaseUrl,
+  isLikelyLocalEndpoint,
+  getApiPermissionOrigins,
+  toOriginPermissionPattern
+} from "./lib/endpoint-validator.js";
 
 const fields = {
   apiMode: document.getElementById("apiMode"),
@@ -25,6 +31,7 @@ const fields = {
   customHeadersJson: document.getElementById("customHeadersJson"),
   customBodyTemplate: document.getElementById("customBodyTemplate"),
   customResponsePath: document.getElementById("customResponsePath"),
+  allowLocalEndpoints: document.getElementById("allowLocalEndpoints"),
   saveApiButton: document.getElementById("saveApiSettings"),
   saveProfileButton: document.getElementById("saveProfile"),
   profileSectionEditor: document.getElementById("profileSectionEditor"),
@@ -89,7 +96,8 @@ const API_CONFIG_FIELD_KEYS = [
   "customMethod",
   "customHeadersJson",
   "customBodyTemplate",
-  "customResponsePath"
+  "customResponsePath",
+  "allowLocalEndpoints"
 ];
 
 const RESUME_SECTION_GUIDE = [
@@ -537,8 +545,59 @@ fields.apiMode.addEventListener("change", async () => {
   updateModeBlocks();
   await maybeAutoRefreshModelList();
 });
-fields.baseUrl.addEventListener("change", () => maybeAutoRefreshModelList());
-fields.customUrl.addEventListener("change", () => maybeAutoRefreshModelList());
+function checkAndHandleLocalEndpointInput() {
+  const currentUrl = fields.apiMode.value === "custom" ? fields.customUrl.value.trim() : fields.baseUrl.value.trim();
+  if (isLikelyLocalEndpoint(currentUrl)) {
+    if (fields.allowLocalEndpoints && !fields.allowLocalEndpoints.checked) {
+      fields.allowLocalEndpoints.checked = true;
+      setInlineFeedback("💡 检测到本地/局域网 AI 端点：已自动开启「允许本地/局域网 AI 端点」。");
+      setApiDirty("已自动开启本地端点访问支持，点击“保存 API 设置”后生效。");
+    }
+  }
+}
+
+function handleBaseUrlChangeOrBlur() {
+  const raw = fields.baseUrl.value.trim();
+  if (!raw) return;
+
+  if (isLikelyLocalEndpoint(raw)) {
+    if (fields.allowLocalEndpoints && !fields.allowLocalEndpoints.checked) {
+      fields.allowLocalEndpoints.checked = true;
+    }
+  }
+  const normalized = normalizeOpenAiBaseUrl(raw);
+  if (normalized && normalized !== raw) {
+    fields.baseUrl.value = normalized;
+    if (isLikelyLocalEndpoint(raw)) {
+      setInlineFeedback("💡 检测到 Ollama / 本地 AI 服务：已自动补全 /v1 路径，并开启本地端点支持。");
+    } else {
+      setInlineFeedback("💡 API Base URL 格式已自动规范化。");
+    }
+    setApiDirty("已自动规范化 API 地址，点击“保存 API 设置”后生效。");
+  }
+  void maybeAutoRefreshModelList();
+}
+
+function handleCustomUrlChangeOrBlur() {
+  const raw = fields.customUrl.value.trim();
+  if (!raw) return;
+
+  if (isLikelyLocalEndpoint(raw)) {
+    if (fields.allowLocalEndpoints && !fields.allowLocalEndpoints.checked) {
+      fields.allowLocalEndpoints.checked = true;
+      setInlineFeedback("💡 检测到本地/局域网 AI 端点：已自动开启「允许本地/局域网 AI 端点」。");
+      setApiDirty("已自动开启本地端点访问支持，点击“保存 API 设置”后生效。");
+    }
+  }
+  void maybeAutoRefreshModelList();
+}
+
+fields.baseUrl.addEventListener("input", checkAndHandleLocalEndpointInput);
+fields.baseUrl.addEventListener("change", handleBaseUrlChangeOrBlur);
+fields.baseUrl.addEventListener("blur", handleBaseUrlChangeOrBlur);
+fields.customUrl.addEventListener("input", checkAndHandleLocalEndpointInput);
+fields.customUrl.addEventListener("change", handleCustomUrlChangeOrBlur);
+fields.customUrl.addEventListener("blur", handleCustomUrlChangeOrBlur);
 registerApiDirtyTracking();
 fields.profileFileInput.addEventListener("change", importProfileFromFile);
 fields.profileSectionEditor.addEventListener("input", handleProfileEditorInput);
@@ -1167,6 +1226,9 @@ function applyApiConfig(config) {
   fields.customHeadersJson.value = config.customHeadersJson || "{}";
   fields.customBodyTemplate.value = config.customBodyTemplate || "";
   fields.customResponsePath.value = config.customResponsePath || "";
+  if (fields.allowLocalEndpoints) {
+    fields.allowLocalEndpoints.checked = Boolean(config.allowLocalEndpoints);
+  }
 }
 
 function collectApiConfig() {
@@ -1177,19 +1239,25 @@ function collectApiConfig() {
 }
 
 function getApiConfigSnapshotFromFields() {
+  const mode = fields.apiMode.value;
+  let baseUrl = fields.baseUrl.value.trim();
+  if (mode === "openai-compatible" && baseUrl) {
+    baseUrl = normalizeOpenAiBaseUrl(baseUrl);
+  }
   return {
-    mode: fields.apiMode.value,
+    mode,
     apiKey: fields.apiKey.value.trim(),
     model: fields.model.value.trim(),
     useJsonResponseFormat: fields.useJsonResponseFormat.checked,
-    baseUrl: fields.baseUrl.value.trim(),
+    baseUrl,
     endpointPath: fields.endpointPath.value.trim(),
     extraHeadersJson: fields.extraHeadersJson.value.trim() || "{}",
     customUrl: fields.customUrl.value.trim(),
     customMethod: fields.customMethod.value,
     customHeadersJson: fields.customHeadersJson.value.trim() || "{}",
     customBodyTemplate: fields.customBodyTemplate.value,
-    customResponsePath: fields.customResponsePath.value.trim()
+    customResponsePath: fields.customResponsePath.value.trim(),
+    allowLocalEndpoints: Boolean(fields.allowLocalEndpoints?.checked)
   };
 }
 
@@ -2670,40 +2738,36 @@ function sendRuntimeMessage(message) {
 
 async function ensureApiHostPermissions(apiConfig, options = {}) {
   const origins = getApiPermissionOrigins(apiConfig);
-  if (origins.length === 0 || !chrome.permissions) {
+  if (origins.length === 0 || !chrome?.permissions?.contains) {
     return true;
   }
 
   const permissions = { origins };
-  if (options.prompt) {
-    return requestOptionalPermissions(permissions);
-  }
 
-  return containsOptionalPermissions(permissions);
-}
-
-function getApiPermissionOrigins(apiConfig) {
-  const urls = [];
-  if (apiConfig.mode === "openai-compatible" && apiConfig.baseUrl) {
-    urls.push(apiConfig.baseUrl);
-  }
-  if (apiConfig.mode === "custom" && apiConfig.customUrl) {
-    urls.push(apiConfig.customUrl);
-  }
-
-  return [...new Set(urls.map(toOriginPermissionPattern).filter(Boolean))];
-}
-
-function toOriginPermissionPattern(value) {
+  // Smooth skip: If already granted, return true immediately without prompt or gesture requirement
   try {
-    const url = new URL(value);
-    if (!["http:", "https:"].includes(url.protocol)) {
-      return "";
+    const alreadyGranted = await containsOptionalPermissions(permissions);
+    if (alreadyGranted) {
+      return true;
     }
-    return `${url.protocol}//${url.hostname}/*`;
-  } catch {
-    return "";
+  } catch (err) {
+    console.warn("OJAF: failed checking optional permissions:", err);
   }
+
+  if (options.prompt && chrome.permissions?.request) {
+    try {
+      return await requestOptionalPermissions(permissions);
+    } catch (error) {
+      // Re-check contains in case user already granted or gesture was lost
+      try {
+        const checkAfter = await containsOptionalPermissions(permissions);
+        if (checkAfter) return true;
+      } catch {}
+      throw error;
+    }
+  }
+
+  return false;
 }
 
 function containsOptionalPermissions(permissions) {
