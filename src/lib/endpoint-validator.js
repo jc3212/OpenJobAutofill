@@ -280,20 +280,69 @@ export function normalizeOpenAiBaseUrl(rawUrl) {
 
     const cleanPath = url.pathname.replace(/\/+$/, "");
 
-    // If it's Ollama or local LLM server and path is empty or "/", auto-append /v1
-    if ((isOllamaPort || isLocal) && (cleanPath === "" || cleanPath === "/")) {
+    // For OpenAI-compatible endpoints, if path is empty or "/", auto-append /v1
+    if (cleanPath === "" || cleanPath === "/") {
       url.pathname = "/v1";
       return url.toString().replace(/\/+$/, "");
     }
 
-    // Return trimmed URL without trailing slash if path is "/"
-    if (url.pathname === "/") {
-      return url.origin;
-    }
     return url.toString().replace(/\/+$/, "");
   } catch {
     return trimmed;
   }
+}
+
+/**
+ * Checks if an HTTP response or text payload appears to be an HTML document
+ * (e.g. gateway SPA, management dashboard, Nginx error, or captive portal)
+ * rather than a valid JSON API response.
+ * 
+ * @param {Response|object|null} response 
+ * @param {string} text 
+ * @returns {boolean}
+ */
+export function isHtmlResponse(response, text) {
+  const contentType = (response?.headers?.get?.("content-type") || "").toLowerCase();
+  if (contentType.includes("text/html")) {
+    return true;
+  }
+  const trimmed = String(text || "").trim().toLowerCase();
+  if (trimmed.startsWith("<!doctype html") || trimmed.startsWith("<html")) {
+    return true;
+  }
+  if (/<head[\s>]/.test(trimmed) && (/<body[\s>]/.test(trimmed) || /<\/head>/.test(trimmed))) {
+    return true;
+  }
+  if (trimmed.includes("/theme-bootstrap.js") || trimmed.includes("theme-bootstrap.js")) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Constructs an informative, user-actionable error when an API returns an HTML page.
+ * 
+ * @param {string} text 
+ * @param {string} [url] 
+ * @returns {Error}
+ */
+export function createHtmlResponseError(text, url) {
+  const isGatewaySpa = /theme-bootstrap\.js|oneapi|newapi/i.test(text);
+  const snippet = String(text || "").trim().slice(0, 150);
+  if (isGatewaySpa) {
+    return new Error(
+      `API 接口返回了 HTML 网页而非 JSON 数据（检测到 NewAPI / OneAPI 等管理后台页面）。` +
+      `通常是因为 API Base URL 缺少 /v1 后缀（例如应配置为 http://.../v1 而非根域名）。` +
+      (url ? ` 请求 URL: ${url}。` : "") +
+      ` 响应摘要: ${snippet}`
+    );
+  }
+  return new Error(
+    `API 接口返回了 HTML 网页而非 JSON 数据（可能命中了前端 SPA 路由、反代错误或网络认证页面）。` +
+    `通常是因为 API Base URL 缺少 /v1 后缀或接口地址错误。` +
+    (url ? ` 请求 URL: ${url}。` : "") +
+    ` 响应摘要: ${snippet}`
+  );
 }
 
 /**

@@ -23,7 +23,9 @@ import {
   getOllamaDnrRules,
   OLLAMA_DNR_RULE_LOCALHOST_ID,
   OLLAMA_DNR_RULE_127001_ID,
-  DANGEROUS_PORTS
+  DANGEROUS_PORTS,
+  isHtmlResponse,
+  createHtmlResponseError
 } from "../../src/lib/endpoint-validator.js";
 import {
   handleMessage,
@@ -93,6 +95,14 @@ assert.equal(normalizeOpenAiBaseUrl("http://127.0.0.1:11434/chat/completions"), 
 assert.equal(normalizeOpenAiBaseUrl("http://localhost:1234"), "http://localhost:1234/v1");
 assert.equal(normalizeOpenAiBaseUrl("http://localhost:8000"), "http://localhost:8000/v1");
 
+// Bare external domains without /v1 must also be auto-completed to /v1
+assert.equal(normalizeOpenAiBaseUrl("https://api.openai.com"), "https://api.openai.com/v1");
+assert.equal(normalizeOpenAiBaseUrl("https://api.openai.com/"), "https://api.openai.com/v1");
+assert.equal(normalizeOpenAiBaseUrl("https://api.deepseek.com"), "https://api.deepseek.com/v1");
+assert.equal(normalizeOpenAiBaseUrl("https://api.deepseek.com/"), "https://api.deepseek.com/v1");
+assert.equal(normalizeOpenAiBaseUrl("http://my-newapi.com:3000"), "http://my-newapi.com:3000/v1");
+assert.equal(normalizeOpenAiBaseUrl("http://my-newapi.com:3000/chat/completions"), "http://my-newapi.com:3000/v1");
+
 // Already having /v1 must be preserved idempotently
 assert.equal(normalizeOpenAiBaseUrl("http://localhost:11434/v1"), "http://localhost:11434/v1");
 assert.equal(normalizeOpenAiBaseUrl("http://localhost:11434/v1/"), "http://localhost:11434/v1");
@@ -103,6 +113,17 @@ assert.equal(normalizeOpenAiBaseUrl("https://api.deepseek.com/v1"), "https://api
 assert.equal(normalizeOpenAiBaseUrl("http://localhost:8000/api/v2"), "http://localhost:8000/api/v2");
 
 console.log("  ✔ OpenAI Base URL normalization & /v1 auto-completion verified");
+
+// HTML response detection tests
+{
+  const htmlSnippet = '<!doctype html><html lang="zh-CN"><head><script src="/theme-bootstrap.js"></script></head><body>NewAPI</body></html>';
+  assert.equal(isHtmlResponse({ headers: new Headers({ "content-type": "text/html; charset=utf-8" }) }, htmlSnippet), true);
+  assert.equal(isHtmlResponse(null, htmlSnippet), true);
+  assert.equal(isHtmlResponse(null, '{"sections": {}}'), false);
+  const err = createHtmlResponseError(htmlSnippet, "http://api.domain.com/chat/completions");
+  assert.match(err.message, /NewAPI \/ OneAPI/);
+  assert.match(err.message, /\/v1/);
+}
 
 // -------------------------------------------------------------
 // 3. Local Endpoint Intelligent Detection

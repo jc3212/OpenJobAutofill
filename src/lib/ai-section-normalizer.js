@@ -10,6 +10,10 @@ import {
   STANDARD_SECTION_KEYS
 } from "./resume-schema.js";
 import { normalizeAiFieldAliases } from "./profile-reconciler.js";
+import {
+  isHtmlResponse,
+  createHtmlResponseError
+} from "./endpoint-validator.js";
 
 /**
  * Clean prototype pollution recursively up to depth 6.
@@ -510,6 +514,10 @@ export function cleanAndExtractJson(rawAiResult) {
 
   if (!rawStr) {
     throw new Error(`AI 返回的内容为空，缺少有效 sections 结构。响应摘要: ${snippet}`);
+  }
+
+  if (isHtmlResponse(null, rawStr)) {
+    throw createHtmlResponseError(rawStr);
   }
 
   // 1. Remove closed <think>...</think>, <thought>...</thought>, <reasoning>...</reasoning> tags

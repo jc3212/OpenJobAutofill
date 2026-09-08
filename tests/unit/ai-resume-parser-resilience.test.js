@@ -353,7 +353,20 @@ console.log("6. Testing Diagnostics on Empty / Invalid Inputs...");
     /AI 未能从文本中提取出有效经历内容/
   );
 
-  console.log("  ✔ Clear diagnostic feedback with 150-char snippets asserted for all error paths");
+  // 6.5 HTML Gateway / SPA response interception
+  const htmlGatewayResponse = '<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8" /><script src="/theme-bootstrap.js"></script><link rel="icon" type="image/x-icon" href="/favicon.ico" /><title>One API</title></head><body><div id="root"></div></body></html>';
+  assert.throws(
+    () => extractAndNormalizeAiSections(htmlGatewayResponse),
+    (err) => {
+      assert.match(err.message, /API 接口返回了 HTML 网页而非 JSON 数据/);
+      assert.match(err.message, /NewAPI \/ OneAPI/);
+      assert.match(err.message, /\/v1/);
+      assert.ok(err.message.includes("theme-bootstrap.js"));
+      return true;
+    }
+  );
+
+  console.log("  ✔ Clear diagnostic feedback with 150-char snippets asserted for all error paths (including HTML gateway interception)");
 }
 
 // -------------------------------------------------------------

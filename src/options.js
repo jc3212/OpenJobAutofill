@@ -12,6 +12,7 @@ import {
 import {
   normalizeOpenAiBaseUrl,
   isLikelyLocalEndpoint,
+  isHtmlResponse,
   getApiPermissionOrigins,
   toOriginPermissionPattern
 } from "./lib/endpoint-validator.js";
@@ -571,7 +572,7 @@ function handleBaseUrlChangeOrBlur() {
     if (isLikelyLocalEndpoint(raw)) {
       setInlineFeedback("💡 检测到 Ollama / 本地 AI 服务：已自动补全 /v1 路径，并开启本地端点支持。");
     } else {
-      setInlineFeedback("💡 API Base URL 格式已自动规范化。");
+      setInlineFeedback("💡 API Base URL 已自动规范化（已自动补全 /v1 路径）。");
     }
     setApiDirty("已自动规范化 API 地址，点击“保存 API 设置”后生效。");
   }
@@ -1243,6 +1244,9 @@ function getApiConfigSnapshotFromFields() {
   let baseUrl = fields.baseUrl.value.trim();
   if (mode === "openai-compatible" && baseUrl) {
     baseUrl = normalizeOpenAiBaseUrl(baseUrl);
+    if (fields.baseUrl && fields.baseUrl.value.trim() !== baseUrl) {
+      fields.baseUrl.value = baseUrl;
+    }
   }
   return {
     mode,
@@ -2710,6 +2714,9 @@ function setApiPreview(message) {
 
 function formatConnectionPreview(result) {
   const parts = [];
+  if (result?.contentPreview && isHtmlResponse(null, result.contentPreview)) {
+    parts.push("⚠️ 警告：接口返回了 HTML 页面而非 JSON。通常是因为 Base URL 缺少 /v1 路径，请检查并补全 /v1。");
+  }
   if (result?.parsed !== undefined) {
     parts.push(`解析结果:\n${JSON.stringify(result.parsed, null, 2).slice(0, 3000)}`);
   }

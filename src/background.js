@@ -10,6 +10,8 @@ import {
   validateEndpointUrl,
   validateConfiguredEndpoint,
   normalizeOpenAiBaseUrl,
+  isHtmlResponse,
+  createHtmlResponseError,
   getOllamaDnrRules,
   OLLAMA_DNR_RULE_LOCALHOST_ID,
   OLLAMA_DNR_RULE_127001_ID
@@ -653,7 +655,14 @@ async function listModels(payload) {
 
   const text = await response.text();
   if (!response.ok) {
+    if (isHtmlResponse(response, text)) {
+      throw createHtmlResponseError(text, url);
+    }
     throw new Error(`Model list request failed ${response.status}: ${text.slice(0, 500)}`);
+  }
+
+  if (isHtmlResponse(response, text)) {
+    throw createHtmlResponseError(text, url);
   }
 
   const data = safeJsonParse(text);
@@ -970,7 +979,14 @@ async function callOpenAiCompatible(apiConfig, messages, context) {
 
   const text = await response.text();
   if (!response.ok) {
+    if (isHtmlResponse(response, text)) {
+      throw createHtmlResponseError(text, url);
+    }
     throw new Error(`API request failed ${response.status}: ${text.slice(0, 500)}`);
+  }
+
+  if (isHtmlResponse(response, text)) {
+    throw createHtmlResponseError(text, url);
   }
 
   const data = safeJsonParse(text);
@@ -1040,7 +1056,14 @@ async function callCustomApi(apiConfig, messages, context) {
 
   const text = await response.text();
   if (!response.ok) {
+    if (isHtmlResponse(response, text)) {
+      throw createHtmlResponseError(text, apiConfig.customUrl);
+    }
     throw new Error(`Custom API request failed ${response.status}: ${text.slice(0, 500)}`);
+  }
+
+  if (isHtmlResponse(response, text)) {
+    throw createHtmlResponseError(text, apiConfig.customUrl);
   }
 
   const data = safeJsonParse(text);
@@ -1168,6 +1191,9 @@ function normalizeModelItem(item) {
 function joinUrl(baseUrl, path) {
   const normalizedBase = String(baseUrl).replace(/\/+$/, "");
   const normalizedPath = String(path || "").replace(/^\/?/, "/");
+  if (normalizedBase.endsWith("/v1") && normalizedPath.startsWith("/v1/")) {
+    return `${normalizedBase}${normalizedPath.slice(3)}`;
+  }
   return `${normalizedBase}${normalizedPath}`;
 }
 
@@ -1194,10 +1220,10 @@ function renderTemplate(template, values) {
     userPromptJson: JSON.stringify(values.userPrompt),
     prompt: values.userPrompt,
     promptJson: JSON.stringify(values.userPrompt),
-    profileJson: JSON.stringify(values.profile),
-    profileCatalogJson: JSON.stringify(values.profileCatalog || values.profile),
-    fieldsJson: JSON.stringify(values.scan.fields),
-    scanJson: JSON.stringify(values.scan)
+    profileJson: JSON.stringify(values.profile || {}),
+    profileCatalogJson: JSON.stringify(values.profileCatalog || values.profile || {}),
+    fieldsJson: JSON.stringify(values.scan?.fields || []),
+    scanJson: JSON.stringify(values.scan || {})
   };
 
   return String(template).replace(/\{\{(\w+)\}\}/g, (_match, key) => {
@@ -1542,6 +1568,8 @@ export {
   validateEndpointUrl,
   validateConfiguredEndpoint,
   normalizeOpenAiBaseUrl,
+  isHtmlResponse,
+  createHtmlResponseError,
   syncDeclarativeNetRequestRules,
   parseResumeWithAi,
   extractAndNormalizeAiSections

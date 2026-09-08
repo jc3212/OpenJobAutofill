@@ -31,6 +31,7 @@ async function runAll() {
     await import("./unit/adversarial-fixes-v1-v12.test.js");
     await import("./unit/local-endpoint-security.test.js");
     await import("./unit/ai-resume-parser-resilience.test.js");
+    await import("./unit/ai-gateway-html-interceptor.test.js");
 
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
     console.log("==================================================================");
