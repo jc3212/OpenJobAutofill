@@ -14,6 +14,7 @@ import {
   OLLAMA_DNR_RULE_LOCALHOST_ID,
   OLLAMA_DNR_RULE_127001_ID
 } from "./lib/endpoint-validator.js";
+import { extractAndNormalizeAiSections } from "./lib/ai-section-normalizer.js";
 
 const DEFAULT_API_CONFIG = {
   mode: "openai-compatible",
@@ -1434,7 +1435,7 @@ async function parseResumeWithAi(payload) {
   const systemPrompt = [
     "You are a professional resume structure analyzer.",
     "Your job is to extract structured educational background, work experience, project experience, skills, certificates, and awards from the given text.",
-    "Return strict JSON only. Do not wrap with markdown blocks. Do not invent any personal identification values.",
+    "Do not output thinking process. Output strict JSON only. Do not wrap with markdown blocks. Root key 'sections' or direct section keys (education, work, project, computer, language, awards, self). Do not invent any personal identification values.",
     "The returned JSON must have this schema:",
     JSON.stringify({
       sections: {
@@ -1520,41 +1521,10 @@ async function parseResumeWithAi(payload) {
     throw new Error("AI 响应过大或格式不正确。");
   }
 
-  const cleanedText = rawAiResult.trim().replace(/^```(?:json)?/i, "").replace(/```$/i, "").trim();
-  let parsed;
-  try {
-    parsed = JSON.parse(cleanedText);
-  } catch (err) {
-    const candidate = extractFirstJson(cleanedText);
-    parsed = candidate ? safeJsonParse(candidate) : null;
-    if (!parsed) {
-      throw new Error(`AI 返回的内容不是有效的 JSON 结构: ${cleanedText.slice(0, 300)}`);
-    }
-  }
-
-  const safeObj = cleanPrototypePollution(parsed);
-
-  if (!safeObj || typeof safeObj !== "object" || !safeObj.sections || typeof safeObj.sections !== "object") {
-    throw new Error("AI 返回的结果缺少有效 sections 结构。");
-  }
-
-  let hasExperience = false;
-  for (const sec of Object.values(safeObj.sections)) {
-    if (sec?.kind === "repeat" && Array.isArray(sec.items) && sec.items.length > 0) {
-      hasExperience = true;
-      break;
-    }
-    if (sec?.kind === "simple" && sec.values && Object.keys(sec.values).length > 0) {
-      hasExperience = true;
-      break;
-    }
-  }
-  if (!hasExperience) {
-    throw new Error("AI 未能从文本中提取出有效经历内容。");
-  }
+  const sections = extractAndNormalizeAiSections(rawAiResult);
 
   return {
-    sections: safeObj.sections,
+    sections,
     diagnostics: {
       provider: apiConfig.mode || "openai-compatible",
       model: apiConfig.model || "default"
@@ -1572,6 +1542,8 @@ export {
   validateEndpointUrl,
   validateConfiguredEndpoint,
   normalizeOpenAiBaseUrl,
-  syncDeclarativeNetRequestRules
+  syncDeclarativeNetRequestRules,
+  parseResumeWithAi,
+  extractAndNormalizeAiSections
 };
 

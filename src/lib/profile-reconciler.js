@@ -1,4 +1,4 @@
-﻿/**
+/**
  * OpenJobAutofill - Profile Reconciler Engine
  * 
  * Implements non-destructive reconciliation between local profile data and
@@ -33,25 +33,158 @@ export function normalizeAiFieldAliases(sectionKey, values = {}) {
   const normVal = { ...values };
 
   if (sectionKey === "education") {
-    if (normVal["学校名称"] && !normVal["学校"]) normVal["学校"] = normVal["学校名称"];
-    if (normVal["学校"] && !normVal["学校名称"]) normVal["学校名称"] = normVal["学校"];
-    if (normVal["起始时间"] && !normVal["开始时间"]) normVal["开始时间"] = normVal["起始时间"];
-    if (normVal["开始时间"] && !normVal["起始时间"]) normVal["起始时间"] = normVal["开始时间"];
+    const school = normVal["学校"] || normVal["学校名称"] || normVal["毕业院校"] || normVal["院校"] || normVal["大学"] || normVal["school"] || normVal["university"] || normVal["college"] || normVal["institution"];
+    if (school) {
+      normVal["学校"] = school;
+      normVal["学校名称"] = school;
+    }
+    const major = normVal["专业"] || normVal["专业名称"] || normVal["所学专业"] || normVal["major"] || normVal["discipline"] || normVal["subject"];
+    if (major) {
+      normVal["专业"] = major;
+    }
+    const degree = normVal["学历"] || normVal["学历层次"] || normVal["学历学位"] || normVal["学位"] || normVal["degree"] || normVal["education_level"];
+    if (degree) {
+      normVal["学历"] = degree;
+    }
+    const startTime = normVal["开始时间"] || normVal["起始时间"] || normVal["入学时间"] || normVal["入学年月"] || normVal["开始年月"] || normVal["start_time"] || normVal["startDate"] || normVal["start_date"] || normVal["from"];
+    if (startTime) {
+      normVal["开始时间"] = startTime;
+      normVal["起始时间"] = startTime;
+    }
+    const endTime = normVal["结束时间"] || normVal["毕业时间"] || normVal["毕业年月"] || normVal["结束年月"] || normVal["end_time"] || normVal["endDate"] || normVal["end_date"] || normVal["to"];
+    if (endTime) {
+      normVal["结束时间"] = endTime;
+    }
+    const desc = normVal["专业描述"] || normVal["学习描述"] || normVal["主修课程"] || normVal["description"] || normVal["courses"];
+    if (desc && !normVal["专业描述"]) {
+      normVal["专业描述"] = desc;
+    }
   } else if (sectionKey === "work" || sectionKey === "internship") {
-    if (normVal["公司名称"] && !normVal["公司"]) normVal["公司"] = normVal["公司名称"];
-    if (normVal["公司"] && !normVal["公司名称"]) normVal["公司名称"] = normVal["公司"];
-    if (normVal["职位名称"] && !normVal["职位"]) normVal["职位"] = normVal["职位名称"];
-    if (normVal["职位"] && !normVal["职位名称"]) normVal["职位名称"] = normVal["职位"];
-    if (normVal["工作描述"] && !normVal["工作内容"]) normVal["工作内容"] = normVal["工作描述"];
-    if (normVal["工作内容"] && !normVal["工作描述"]) normVal["工作描述"] = normVal["工作内容"];
+    const company = normVal["公司"] || normVal["公司名称"] || normVal["单位名称"] || normVal["工作单位"] || normVal["企业名称"] || normVal["company"] || normVal["company_name"] || normVal["organization"] || normVal["employer"];
+    if (company) {
+      normVal["公司"] = company;
+      normVal["公司名称"] = company;
+    }
+    const position = normVal["职位"] || normVal["职位名称"] || normVal["担任职位"] || normVal["岗位名称"] || normVal["岗位"] || normVal["position"] || normVal["title"] || normVal["job_title"] || normVal["role"];
+    if (position) {
+      normVal["职位"] = position;
+      normVal["职位名称"] = position;
+    }
+    const dept = normVal["部门"] || normVal["所属部门"] || normVal["部门名称"] || normVal["department"];
+    if (dept) {
+      normVal["部门"] = dept;
+    }
+    const startTime = normVal["开始时间"] || normVal["起始时间"] || normVal["入职时间"] || normVal["入职年月"] || normVal["开始年月"] || normVal["start_time"] || normVal["startDate"] || normVal["start_date"] || normVal["from"];
+    if (startTime) {
+      normVal["开始时间"] = startTime;
+      normVal["起始时间"] = startTime;
+    }
+    const endTime = normVal["结束时间"] || normVal["离职时间"] || normVal["离职年月"] || normVal["结束年月"] || normVal["end_time"] || normVal["endDate"] || normVal["end_date"] || normVal["to"];
+    if (endTime) {
+      normVal["结束时间"] = endTime;
+    }
+    const workDesc = normVal["工作内容"] || normVal["工作描述"] || normVal["工作职责"] || normVal["职责描述"] || normVal["主要职责"] || normVal["description"] || normVal["responsibilities"] || normVal["content"];
+    if (workDesc) {
+      normVal["工作内容"] = workDesc;
+      normVal["工作描述"] = workDesc;
+    }
   } else if (sectionKey === "project") {
-    if (normVal["项目描述"] && !normVal["项目内容"]) normVal["项目内容"] = normVal["项目描述"];
-    if (normVal["项目内容"] && !normVal["项目描述"]) normVal["项目描述"] = normVal["项目内容"];
-    if (normVal["主要业绩"] && !normVal["项目成果"]) normVal["项目成果"] = normVal["主要业绩"];
-    if (normVal["项目成果"] && !normVal["主要业绩"]) normVal["主要业绩"] = normVal["项目成果"];
-    if (normVal["项目角色"]) {
-      if (!normVal["职位"]) normVal["职位"] = normVal["项目角色"];
-      if (!normVal["本人职责"]) normVal["本人职责"] = normVal["项目角色"];
+    const projName = normVal["项目名称"] || normVal["project_name"] || normVal["projectName"] || normVal["name"];
+    if (projName) {
+      normVal["项目名称"] = projName;
+    }
+    const role = normVal["项目角色"] || normVal["担任角色"] || normVal["role"] || normVal["position"];
+    if (role) {
+      if (!normVal["职位"]) normVal["职位"] = role;
+      if (!normVal["本人职责"]) normVal["本人职责"] = role;
+    }
+    const projDesc = normVal["项目内容"] || normVal["项目描述"] || normVal["项目介绍"] || normVal["description"] || normVal["content"];
+    if (projDesc) {
+      normVal["项目内容"] = projDesc;
+      normVal["项目描述"] = projDesc;
+    }
+    const result = normVal["项目成果"] || normVal["主要业绩"] || normVal["业绩"] || normVal["achievements"] || normVal["outcome"] || normVal["result"];
+    if (result) {
+      normVal["项目成果"] = result;
+      normVal["主要业绩"] = result;
+    }
+    const startTime = normVal["开始时间"] || normVal["起始时间"] || normVal["开始年月"] || normVal["start_time"] || normVal["startDate"] || normVal["start_date"] || normVal["from"];
+    if (startTime) {
+      normVal["开始时间"] = startTime;
+      normVal["起始时间"] = startTime;
+    }
+    const endTime = normVal["结束时间"] || normVal["结束年月"] || normVal["end_time"] || normVal["endDate"] || normVal["end_date"] || normVal["to"];
+    if (endTime) {
+      normVal["结束时间"] = endTime;
+    }
+  } else if (sectionKey === "computer") {
+    const skillName = normVal["证书名称（技能名称）"] || normVal["技能名称"] || normVal["技能"] || normVal["IT技能"] || normVal["技术"] || normVal["name"] || normVal["skill"] || normVal["skill_name"] || normVal["technology"] || normVal["tech"];
+    if (skillName) {
+      normVal["证书名称（技能名称）"] = skillName;
+    }
+    const level = normVal["掌握程度"] || normVal["熟练度"] || normVal["熟练程度"] || normVal["level"] || normVal["proficiency"];
+    if (level) {
+      normVal["掌握程度"] = level;
+    }
+  } else if (sectionKey === "language") {
+    const lang = normVal["外语种类"] || normVal["语种"] || normVal["语言"] || normVal["language"] || normVal["lang"];
+    if (lang) {
+      normVal["外语种类"] = lang;
+    }
+    const cert = normVal["证书名称（技能名称）"] || normVal["证书名称"] || normVal["证书"] || normVal["考试"] || normVal["cert"] || normVal["exam"];
+    if (cert) {
+      normVal["证书名称（技能名称）"] = cert;
+    }
+    const score = normVal["成绩"] || normVal["分数"] || normVal["得分"] || normVal["score"] || normVal["grade"];
+    if (score) {
+      normVal["成绩"] = score;
+    }
+    const level = normVal["掌握程度"] || normVal["水平"] || normVal["熟练程度"] || normVal["level"] || normVal["proficiency"];
+    if (level) {
+      normVal["掌握程度"] = level;
+    }
+  } else if (sectionKey === "awards") {
+    const awardName = normVal["奖惩名称"] || normVal["奖项名称"] || normVal["荣誉名称"] || normVal["奖励名称"] || normVal["奖项"] || normVal["荣誉"] || normVal["name"] || normVal["award"] || normVal["honor"] || normVal["title"];
+    if (awardName) {
+      normVal["奖惩名称"] = awardName;
+    }
+    const awardTime = normVal["奖惩时间"] || normVal["获奖时间"] || normVal["时间"] || normVal["date"] || normVal["time"] || normVal["year"];
+    if (awardTime) {
+      normVal["奖惩时间"] = awardTime;
+    }
+    const issuer = normVal["颁奖单位"] || normVal["授奖单位"] || normVal["颁发机构"] || normVal["发证机构"] || normVal["issuer"] || normVal["organization"];
+    if (issuer) {
+      normVal["颁奖单位"] = issuer;
+    }
+    const level = normVal["奖励等级"] || normVal["等级"] || normVal["level"];
+    if (level) {
+      normVal["奖励等级"] = level;
+    }
+    const desc = normVal["奖惩描述"] || normVal["描述"] || normVal["说明"] || normVal["description"];
+    if (desc) {
+      normVal["奖惩描述"] = desc;
+    }
+  } else if (sectionKey === "certificates") {
+    const certName = normVal["证书名称（技能名称）"] || normVal["证书名称"] || normVal["证书"] || normVal["name"] || normVal["certificate_name"] || normVal["cert_name"];
+    if (certName) {
+      normVal["证书名称（技能名称）"] = certName;
+    }
+    const certTime = normVal["证书获得时间"] || normVal["获得时间"] || normVal["发证时间"] || normVal["date"] || normVal["issue_date"] || normVal["time"];
+    if (certTime) {
+      normVal["证书获得时间"] = certTime;
+    }
+    const issuer = normVal["授予单位"] || normVal["发证机构"] || normVal["颁发单位"] || normVal["issuer"] || normVal["organization"];
+    if (issuer) {
+      normVal["授予单位"] = issuer;
+    }
+    const certNo = normVal["证书编号"] || normVal["编号"] || normVal["number"] || normVal["cert_no"] || normVal["id"];
+    if (certNo) {
+      normVal["证书编号"] = certNo;
+    }
+  } else if (sectionKey === "self") {
+    const selfDesc = normVal["自我评价"] || normVal["自我描述"] || normVal["个人评价"] || normVal["个人总结"] || normVal["自我总结"] || normVal["个人优势"] || normVal["self_evaluation"] || normVal["summary"] || normVal["evaluation"] || normVal["introduction"] || normVal["bio"] || normVal["content"];
+    if (selfDesc) {
+      normVal["自我评价"] = selfDesc;
     }
   }
 
